@@ -10,7 +10,9 @@ require (
 	github.com/prometheus/client_golang v1.20.5
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/spf13/viper v1.20.1
+	github.com/zitadel/oidc/v3 v3.33.1
 	golang.org/x/crypto v0.31.0
+	golang.org/x/time v0.7.0
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/gorm v1.25.12
 )
