@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/auth"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/response"
 )
 
@@ -24,7 +28,7 @@ func TestAuthHandlerLoginSuccess(t *testing.T) {
 		AccessTokenExpiresAt:  time.Date(2026, 5, 18, 12, 30, 0, 0, time.UTC),
 		RefreshToken:          "refresh-token",
 		RefreshTokenExpiresAt: time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC),
-	}})
+	}}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -48,7 +52,7 @@ func TestAuthHandlerLoginSuccess(t *testing.T) {
 
 func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := NewAuthHandler(&fakeAuthService{err: auth.ErrInvalidCredentials})
+	handler := NewAuthHandler(&fakeAuthService{err: auth.ErrInvalidCredentials}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -65,7 +69,7 @@ func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
 
 func TestAuthHandlerLoginUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := NewAuthHandler(&fakeAuthService{err: auth.ErrAuthUnavailable})
+	handler := NewAuthHandler(&fakeAuthService{err: auth.ErrAuthUnavailable}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -82,7 +86,7 @@ func TestAuthHandlerLoginUnavailable(t *testing.T) {
 
 func TestAuthHandlerLoginBadJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := NewAuthHandler(&fakeAuthService{err: errors.New("should not call")})
+	handler := NewAuthHandler(&fakeAuthService{err: errors.New("should not call")}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -103,7 +107,7 @@ func TestAuthHandlerRefreshSuccess(t *testing.T) {
 		TokenType:    "Bearer",
 		AccessToken:  "new-access",
 		RefreshToken: "new-refresh",
-	}})
+	}}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -125,7 +129,7 @@ func TestAuthHandlerVerifyWritesRenewedTokenHeaders(t *testing.T) {
 		UserID:                   "user-001",
 		RenewedAccessToken:       "new-access",
 		RenewedAccessTokenExpiry: expireAt,
-	}})
+	}}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -148,7 +152,7 @@ func TestAuthHandlerVerifyWritesRenewedTokenHeaders(t *testing.T) {
 
 func TestAuthHandlerLogoutSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := NewAuthHandler(&fakeAuthService{})
+	handler := NewAuthHandler(&fakeAuthService{}, nil)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -160,6 +164,49 @@ func TestAuthHandlerLogoutSuccess(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthHandlerM2MSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewAuthHandler(&fakeAuthService{}, &fakeM2MService{result: &m2m.VerifyResult{
+		Allowed: true,
+		AppID:   "app00001",
+		AppName: "demo app",
+	}})
+	router := gin.New()
+	handler.RegisterRoutes(router.Group("/api/auth"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/m2m?path=/api/orders", strings.NewReader(`{"method":"GET"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("appId", "app00001")
+	req.Header.Set("timestamp", "1779091200")
+	req.Header.Set("sign", validHexSign())
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthHandlerM2MUnauthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewAuthHandler(&fakeAuthService{}, &fakeM2MService{err: m2m.ErrInvalidSignature})
+	router := gin.New()
+	handler.RegisterRoutes(router.Group("/api/auth"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/m2m", nil)
+	req.Header.Set("appId", "app00001")
+	req.Header.Set("timestamp", "1779091200")
+	req.Header.Set("sign", validHexSign())
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
@@ -184,4 +231,19 @@ func (s *fakeAuthService) Verify(_ context.Context, _ string) (*auth.VerifyResul
 
 func (s *fakeAuthService) Logout(_ context.Context, _ string, _ string) error {
 	return s.err
+}
+
+type fakeM2MService struct {
+	result *m2m.VerifyResult
+	err    error
+}
+
+func (s *fakeM2MService) Verify(_ context.Context, _ m2m.VerifyInput) (*m2m.VerifyResult, error) {
+	return s.result, s.err
+}
+
+func validHexSign() string {
+	mac := hmac.New(sha256.New, []byte("secret"))
+	mac.Write([]byte("payload"))
+	return hex.EncodeToString(mac.Sum(nil))
 }

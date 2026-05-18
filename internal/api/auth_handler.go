@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/auth"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/response"
 )
 
@@ -18,8 +19,13 @@ type AuthService interface {
 	Logout(ctx context.Context, accessToken string, refreshToken string) error
 }
 
+type M2MService interface {
+	Verify(ctx context.Context, input m2m.VerifyInput) (*m2m.VerifyResult, error)
+}
+
 type AuthHandler struct {
 	service AuthService
+	m2m     M2MService
 }
 
 type loginRequest struct {
@@ -35,8 +41,8 @@ type logoutRequest struct {
 	RefreshToken string `json:"refreshToken" binding:"required"`
 }
 
-func NewAuthHandler(service AuthService) *AuthHandler {
-	return &AuthHandler{service: service}
+func NewAuthHandler(service AuthService, m2mService M2MService) *AuthHandler {
+	return &AuthHandler{service: service, m2m: m2mService}
 }
 
 func (h *AuthHandler) RegisterRoutes(group *gin.RouterGroup) {
@@ -44,6 +50,9 @@ func (h *AuthHandler) RegisterRoutes(group *gin.RouterGroup) {
 	group.POST("/refresh", h.Refresh)
 	group.GET("/verify", h.Verify)
 	group.POST("/logout", h.Logout)
+	if h.m2m != nil {
+		group.POST("/m2m", h.M2M)
+	}
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -113,6 +122,25 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	response.OK(c, gin.H{"loggedOut": true})
 }
 
+func (h *AuthHandler) M2M(c *gin.Context) {
+	params, err := requestParams(c)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	result, err := h.m2m.Verify(c.Request.Context(), m2m.VerifyInput{
+		AppID:     c.GetHeader("appId"),
+		Timestamp: c.GetHeader("timestamp"),
+		Sign:      c.GetHeader("sign"),
+		Params:    params,
+	})
+	if err != nil {
+		writeM2MError(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
 func writeAuthError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, auth.ErrInvalidInput):
@@ -136,5 +164,19 @@ func writeTokenError(c *gin.Context, err error) {
 		response.Error(c, http.StatusServiceUnavailable, "鉴权依赖不可用")
 	default:
 		response.Error(c, http.StatusInternalServerError, "鉴权失败")
+	}
+}
+
+func writeM2MError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, m2m.ErrInvalidApp),
+		errors.Is(err, m2m.ErrInvalidTimestamp),
+		errors.Is(err, m2m.ErrInvalidSignature),
+		errors.Is(err, m2m.ErrReplayRequest):
+		response.Error(c, http.StatusUnauthorized, "M2M 鉴权失败")
+	case errors.Is(err, m2m.ErrM2MUnavailable):
+		response.Error(c, http.StatusServiceUnavailable, "M2M 鉴权依赖不可用")
+	default:
+		response.Error(c, http.StatusInternalServerError, "M2M 鉴权失败")
 	}
 }
