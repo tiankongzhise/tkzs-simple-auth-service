@@ -87,6 +87,79 @@ func TestLoginReturnsUnavailableOnRedisError(t *testing.T) {
 	}
 }
 
+func TestRefreshRotatesRefreshToken(t *testing.T) {
+	service, store, cache := testService(t)
+	login, err := service.Login(context.Background(), LoginInput{
+		Username: "admin",
+		Password: "Zqlt_123456789",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	oldRefreshJTI := store.savedTokens[1].JTI
+
+	refreshed, err := service.Refresh(context.Background(), login.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if refreshed.AccessToken == "" || refreshed.RefreshToken == "" || refreshed.RefreshToken == login.RefreshToken {
+		t.Fatalf("refreshed = %#v", refreshed)
+	}
+	if cache.values["authlimit:jwt:blacklist:"+oldRefreshJTI] != "1" {
+		t.Fatalf("old refresh token was not blacklisted: %#v", cache.values)
+	}
+	if len(store.revokedJTIs) != 1 || store.revokedJTIs[0] != oldRefreshJTI {
+		t.Fatalf("revoked jtis = %#v", store.revokedJTIs)
+	}
+}
+
+func TestVerifyRejectsMissingRedisState(t *testing.T) {
+	service, _, cache := testService(t)
+	login, err := service.Login(context.Background(), LoginInput{
+		Username: "admin",
+		Password: "Zqlt_123456789",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	for key := range cache.values {
+		if key != "authlimit:user:password:user-001" {
+			delete(cache.values, key)
+		}
+	}
+
+	_, err = service.Verify(context.Background(), login.AccessToken)
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("Verify() error = %v", err)
+	}
+}
+
+func TestLogoutRevokesAccessAndRefreshTokens(t *testing.T) {
+	service, store, cache := testService(t)
+	login, err := service.Login(context.Background(), LoginInput{
+		Username: "admin",
+		Password: "Zqlt_123456789",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	accessJTI := store.savedTokens[0].JTI
+	refreshJTI := store.savedTokens[1].JTI
+
+	if err := service.Logout(context.Background(), login.AccessToken, login.RefreshToken); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if cache.values["authlimit:jwt:blacklist:"+accessJTI] != "1" {
+		t.Fatalf("access token not blacklisted: %#v", cache.values)
+	}
+	if cache.values["authlimit:jwt:blacklist:"+refreshJTI] != "1" {
+		t.Fatalf("refresh token not blacklisted: %#v", cache.values)
+	}
+	if len(store.revokedJTIs) != 2 {
+		t.Fatalf("revoked jtis = %#v", store.revokedJTIs)
+	}
+}
+
 func testService(t *testing.T) (*Service, *fakeUserStore, *fakeCache) {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte("Zqlt_123456789"), bcrypt.MinCost)
@@ -120,6 +193,7 @@ func testService(t *testing.T) (*Service, *fakeUserStore, *fakeCache) {
 type fakeUserStore struct {
 	user            *model.User
 	savedTokens     []model.AuthToken
+	revokedJTIs     []string
 	lastLoginUserID string
 }
 
@@ -130,8 +204,20 @@ func (s *fakeUserStore) FindUserByUsername(_ context.Context, username string) (
 	return s.user, nil
 }
 
+func (s *fakeUserStore) FindUserByID(_ context.Context, userID string) (*model.User, error) {
+	if s.user == nil || s.user.ID != userID {
+		return nil, ErrUserNotFound
+	}
+	return s.user, nil
+}
+
 func (s *fakeUserStore) SaveAuthTokens(_ context.Context, tokens []model.AuthToken) error {
 	s.savedTokens = append(s.savedTokens, tokens...)
+	return nil
+}
+
+func (s *fakeUserStore) RevokeAuthTokens(_ context.Context, jtis []string, _ time.Time) error {
+	s.revokedJTIs = append(s.revokedJTIs, jtis...)
 	return nil
 }
 

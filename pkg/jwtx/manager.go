@@ -126,7 +126,7 @@ func (m *Manager) Issue(subject Subject, tokenType string) (*IssuedToken, error)
 
 func (m *Manager) Parse(tokenString string, expectedType string) (*Claims, error) {
 	claims := &Claims{}
-	parser := jwt.NewParser(jwt.WithIssuer(m.issuer), jwt.WithTimeFunc(m.now))
+	parser := jwt.NewParser(jwt.WithIssuer(m.issuer), jwt.WithTimeFunc(m.now), jwt.WithExpirationRequired())
 	token, err := parser.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodRS256 {
 			return nil, fmt.Errorf("unexpected signing method %s", token.Header["alg"])

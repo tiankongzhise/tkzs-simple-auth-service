@@ -17,11 +17,15 @@ var (
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrAccountLocked      = errors.New("account is locked")
 	ErrAuthUnavailable    = errors.New("auth dependency unavailable")
+	ErrInvalidToken       = errors.New("invalid token")
+	ErrTokenRevoked       = errors.New("token revoked")
 )
 
 type UserStore interface {
 	FindUserByUsername(ctx context.Context, username string) (*model.User, error)
+	FindUserByID(ctx context.Context, userID string) (*model.User, error)
 	SaveAuthTokens(ctx context.Context, tokens []model.AuthToken) error
+	RevokeAuthTokens(ctx context.Context, jtis []string, at time.Time) error
 	UpdateLastLogin(ctx context.Context, userID string, at time.Time) error
 }
 
@@ -58,6 +62,15 @@ type LoginResult struct {
 	RefreshTokenExpiresAt time.Time `json:"refreshTokenExpiresAt"`
 }
 
+type VerifyResult struct {
+	UserID                   string    `json:"userId"`
+	Roles                    []string  `json:"roles"`
+	Permissions              []string  `json:"permissions"`
+	ExpiresAt                time.Time `json:"expiresAt"`
+	RenewedAccessToken       string    `json:"-"`
+	RenewedAccessTokenExpiry time.Time `json:"-"`
+}
+
 func NewService(cfg *config.Config, store UserStore, cache Cache, jwtManager *jwtx.Manager) *Service {
 	return &Service{
 		cfg:   cfg,
@@ -70,6 +83,7 @@ func NewService(cfg *config.Config, store UserStore, cache Cache, jwtManager *jw
 
 func (s *Service) SetNow(now func() time.Time) {
 	s.now = now
+	s.jwt.SetNow(now)
 }
 
 func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, error) {
@@ -154,6 +168,132 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, er
 	}, nil
 }
 
+func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResult, error) {
+	claims, err := s.jwt.Parse(refreshToken, model.TokenTypeRefresh)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	if err := s.ensureTokenUsable(ctx, claims.ID, model.TokenTypeRefresh); err != nil {
+		return nil, err
+	}
+	user, err := s.store.FindUserByID(ctx, claims.Subject)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrInvalidToken
+		}
+		return nil, err
+	}
+	if user.Status != model.StatusEnabled {
+		return nil, ErrInvalidToken
+	}
+
+	subject := jwtx.Subject{
+		ID:          user.ID,
+		Roles:       roleCodes(user.Roles),
+		Permissions: permissionCodes(user.Roles),
+	}
+	if s.cfg.JWT.RefreshRotate {
+		pair, err := s.jwt.IssuePair(subject)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.saveAndCachePair(ctx, user.ID, pair); err != nil {
+			return nil, err
+		}
+		if err := s.revokeToken(ctx, claims.ID, model.TokenTypeRefresh, claims.ExpiresAt.Time); err != nil {
+			return nil, err
+		}
+		if err := s.store.RevokeAuthTokens(ctx, []string{claims.ID}, s.now().UTC()); err != nil {
+			return nil, err
+		}
+		return loginResultFromPair(pair), nil
+	}
+
+	access, err := s.jwt.Issue(subject, model.TokenTypeAccess)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.SaveAuthTokens(ctx, []model.AuthToken{{
+		UserID:    user.ID,
+		JTI:       access.JTI,
+		TokenType: model.TokenTypeAccess,
+		Status:    model.TokenStatusActive,
+		ExpiresAt: access.ExpiresAt,
+	}}); err != nil {
+		return nil, err
+	}
+	if err := s.writeTokenState(ctx, access.JTI, model.TokenTypeAccess, user.ID, access.ExpiresAt); err != nil {
+		return nil, ErrAuthUnavailable
+	}
+	return &LoginResult{
+		TokenType:             "Bearer",
+		AccessToken:           access.Token,
+		AccessTokenExpiresAt:  access.ExpiresAt,
+		RefreshToken:          refreshToken,
+		RefreshTokenExpiresAt: claims.ExpiresAt.Time,
+	}, nil
+}
+
+func (s *Service) Verify(ctx context.Context, accessToken string) (*VerifyResult, error) {
+	claims, err := s.jwt.Parse(accessToken, model.TokenTypeAccess)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	if err := s.ensureTokenUsable(ctx, claims.ID, model.TokenTypeAccess); err != nil {
+		return nil, err
+	}
+	result := &VerifyResult{
+		UserID:      claims.Subject,
+		Roles:       claims.Roles,
+		Permissions: claims.Permissions,
+		ExpiresAt:   claims.ExpiresAt.Time,
+	}
+	if s.jwt.ShouldAutoRefresh(claims) {
+		issued, err := s.jwt.Issue(jwtx.Subject{
+			ID:          claims.Subject,
+			Roles:       claims.Roles,
+			Permissions: claims.Permissions,
+		}, model.TokenTypeAccess)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.SaveAuthTokens(ctx, []model.AuthToken{{
+			UserID:    claims.Subject,
+			JTI:       issued.JTI,
+			TokenType: model.TokenTypeAccess,
+			Status:    model.TokenStatusActive,
+			ExpiresAt: issued.ExpiresAt,
+		}}); err != nil {
+			return nil, err
+		}
+		if err := s.writeTokenState(ctx, issued.JTI, model.TokenTypeAccess, claims.Subject, issued.ExpiresAt); err != nil {
+			return nil, ErrAuthUnavailable
+		}
+		result.RenewedAccessToken = issued.Token
+		result.RenewedAccessTokenExpiry = issued.ExpiresAt
+	}
+	return result, nil
+}
+
+func (s *Service) Logout(ctx context.Context, accessToken string, refreshToken string) error {
+	accessClaims, err := s.jwt.Parse(accessToken, model.TokenTypeAccess)
+	if err != nil {
+		return ErrInvalidToken
+	}
+	refreshClaims, err := s.jwt.Parse(refreshToken, model.TokenTypeRefresh)
+	if err != nil {
+		return ErrInvalidToken
+	}
+	jtis := []string{accessClaims.ID, refreshClaims.ID}
+	if err := s.revokeToken(ctx, accessClaims.ID, model.TokenTypeAccess, accessClaims.ExpiresAt.Time); err != nil {
+		return err
+	}
+	if err := s.revokeToken(ctx, refreshClaims.ID, model.TokenTypeRefresh, refreshClaims.ExpiresAt.Time); err != nil {
+		return err
+	}
+	return s.store.RevokeAuthTokens(ctx, jtis, s.now().UTC())
+}
+
 func (s *Service) isLocked(ctx context.Context, userID string) (bool, error) {
 	key, err := s.cache.KeyBuilder().Build("auth", "lock", "user", userID)
 	if err != nil {
@@ -220,11 +360,98 @@ func (s *Service) writeTokenState(ctx context.Context, jti string, tokenType str
 	if err != nil {
 		return err
 	}
-	ttl := time.Until(expiresAt)
+	ttl := expiresAt.Sub(s.now())
 	if ttl <= 0 {
 		ttl = time.Second
 	}
 	return s.cache.Set(ctx, key, userID, ttl)
+}
+
+func (s *Service) ensureTokenUsable(ctx context.Context, jti string, tokenType string) error {
+	blacklistKey, err := s.cache.KeyBuilder().Build("jwt", "blacklist", jti)
+	if err != nil {
+		return err
+	}
+	blacklisted, err := s.cache.Exists(ctx, blacklistKey)
+	if err != nil {
+		return ErrAuthUnavailable
+	}
+	if blacklisted {
+		return ErrTokenRevoked
+	}
+	stateKey, err := s.cache.KeyBuilder().Build("jwt", tokenType, jti)
+	if err != nil {
+		return err
+	}
+	exists, err := s.cache.Exists(ctx, stateKey)
+	if err != nil {
+		return ErrAuthUnavailable
+	}
+	if !exists {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func (s *Service) revokeToken(ctx context.Context, jti string, tokenType string, expiresAt time.Time) error {
+	blacklistKey, err := s.cache.KeyBuilder().Build("jwt", "blacklist", jti)
+	if err != nil {
+		return err
+	}
+	ttl := expiresAt.Sub(s.now())
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	if err := s.cache.Set(ctx, blacklistKey, "1", ttl); err != nil {
+		return ErrAuthUnavailable
+	}
+	stateKey, err := s.cache.KeyBuilder().Build("jwt", tokenType, jti)
+	if err != nil {
+		return err
+	}
+	if err := s.cache.Del(ctx, stateKey); err != nil {
+		return ErrAuthUnavailable
+	}
+	return nil
+}
+
+func (s *Service) saveAndCachePair(ctx context.Context, userID string, pair *jwtx.TokenPair) error {
+	tokens := []model.AuthToken{
+		{
+			UserID:    userID,
+			JTI:       pair.AccessJTI,
+			TokenType: model.TokenTypeAccess,
+			Status:    model.TokenStatusActive,
+			ExpiresAt: pair.AccessExpiresAt,
+		},
+		{
+			UserID:    userID,
+			JTI:       pair.RefreshJTI,
+			TokenType: model.TokenTypeRefresh,
+			Status:    model.TokenStatusActive,
+			ExpiresAt: pair.RefreshExpiresAt,
+		},
+	}
+	if err := s.store.SaveAuthTokens(ctx, tokens); err != nil {
+		return err
+	}
+	if err := s.writeTokenState(ctx, pair.AccessJTI, model.TokenTypeAccess, userID, pair.AccessExpiresAt); err != nil {
+		return ErrAuthUnavailable
+	}
+	if err := s.writeTokenState(ctx, pair.RefreshJTI, model.TokenTypeRefresh, userID, pair.RefreshExpiresAt); err != nil {
+		return ErrAuthUnavailable
+	}
+	return nil
+}
+
+func loginResultFromPair(pair *jwtx.TokenPair) *LoginResult {
+	return &LoginResult{
+		TokenType:             "Bearer",
+		AccessToken:           pair.AccessToken,
+		AccessTokenExpiresAt:  pair.AccessExpiresAt,
+		RefreshToken:          pair.RefreshToken,
+		RefreshTokenExpiresAt: pair.RefreshExpiresAt,
+	}
 }
 
 func roleCodes(roles []model.Role) []string {
