@@ -105,6 +105,9 @@ type UIConfig struct {
 }
 
 func Load() (*Config, error) {
+	if err := LoadEnvFile(".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	path := os.Getenv(EnvConfigPath)
 	if path == "" {
 		path = "./config.yaml"
@@ -113,6 +116,9 @@ func Load() (*Config, error) {
 }
 
 func LoadFile(path string) (*Config, error) {
+	if err := LoadEnvFile(".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	cfg := Default()
 	values, err := readSimpleYAML(path)
 	if err != nil {
@@ -210,6 +216,41 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func LoadEnvFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := stripComment(scanner.Text())
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "export ") && !strings.Contains(line, "=") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid env line: %s", line)
+		}
+		key := strings.TrimSpace(parts[0])
+		value := cleanScalar(parts[1])
+		value = os.ExpandEnv(value)
+		if key == "" {
+			return fmt.Errorf("env key cannot be empty")
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
 func readSimpleYAML(path string) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -286,7 +327,7 @@ func stripComment(line string) string {
 func cleanScalar(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.Trim(value, `"`)
-	return value
+	return os.ExpandEnv(value)
 }
 
 func applyValues(c *Config, values map[string]string) {

@@ -1,41 +1,41 @@
 server:
-  host: "http://127.0.0.1:8080"
-  port: 8080
-  run_mode: "dev"
+  host: "${AUTH_LIMIT_SERVER_HOST}"
+  port: ${AUTH_LIMIT_SERVER_PORT}
+  run_mode: "${AUTH_LIMIT_RUN_MODE}"
 
 service:
-  code: "authlimit"
-  name: "鉴权限流核心服务"
-  version: "v0.1.0"
+  code: "${AUTH_LIMIT_SERVICE_CODE}"
+  name: "${AUTH_LIMIT_SERVICE_NAME}"
+  version: "${AUTH_LIMIT_SERVICE_VERSION}"
 
 postgres:
-  dsn: "host=127.0.0.1 port=5432 user=postgres password=postgres dbname=auth_limit_db sslmode=disable"
+  dsn: "${AUTH_LIMIT_POSTGRES_DSN}"
   max_open_conns: 20
   max_idle_conns: 10
   conn_max_lifetime_seconds: 300
 
 redis:
-  addr: "127.0.0.1:6379"
-  username: "authlimit_user"
-  password: ""
-  db: 0
+  addr: "${AUTH_LIMIT_REDIS_ADDR}"
+  username: "${AUTH_LIMIT_REDIS_USERNAME}"
+  password: "${AUTH_LIMIT_REDIS_PASSWORD}"
+  db: ${AUTH_LIMIT_REDIS_DB}
   dial_timeout: "500ms"
   read_timeout: "1s"
   write_timeout: "1s"
   pool_size: 20
 
 jwt:
-  issuer: "authlimit"
+  issuer: "${AUTH_LIMIT_JWT_ISSUER}"
   access_expire_minutes: 30
   refresh_expire_hours: 24
   auto_refresh_before_minutes: 5
-  private_key_path: "./certs/jwt_private.pem"
-  public_key_path: "./certs/jwt_public.pem"
+  private_key_path: "${AUTH_LIMIT_JWT_PRIVATE_KEY_PATH}"
+  public_key_path: "${AUTH_LIMIT_JWT_PUBLIC_KEY_PATH}"
   refresh_rotate: true
 
 oidc:
   enable: true
-  issuer: "http://127.0.0.1:8080"
+  issuer: "${AUTH_LIMIT_OIDC_ISSUER}"
   authorization_code_expire_minutes: 5
   access_token_expire_minutes: 30
   refresh_token_expire_hours: 24

@@ -35,6 +35,12 @@ Copy-Item .env.example .env
 
 按本地 PostgreSQL、Redis、JWT 证书路径修改 `config.yaml`。私钥、公钥、`.env` 和本地配置文件不会进入仓库。
 
+下载依赖：
+
+```powershell
+go mod download
+```
+
 运行测试：
 
 ```powershell
