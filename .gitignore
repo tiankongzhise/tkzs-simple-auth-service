@@ -43,6 +43,7 @@ bin/
 dist/
 build/
 tmp/
+.gocache/
 
 # Runtime files
 *.log

@@ -1,107 +1,108 @@
 package config
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
+	"github.com/subosito/gotenv"
 )
 
 const EnvConfigPath = "AUTH_LIMIT_CONFIG"
 
 type Config struct {
-	Server   ServerConfig
-	Service  ServiceConfig
-	Postgres PostgresConfig
-	Redis    RedisConfig
-	JWT      JWTConfig
-	OIDC     OIDCConfig
-	Limit    LimitConfig
-	Security SecurityConfig
-	Health   HealthConfig
-	UI       UIConfig
+	Server   ServerConfig   `mapstructure:"server"`
+	Service  ServiceConfig  `mapstructure:"service"`
+	Postgres PostgresConfig `mapstructure:"postgres"`
+	Redis    RedisConfig    `mapstructure:"redis"`
+	JWT      JWTConfig      `mapstructure:"jwt"`
+	OIDC     OIDCConfig     `mapstructure:"oidc"`
+	Limit    LimitConfig    `mapstructure:"limit"`
+	Security SecurityConfig `mapstructure:"security"`
+	Health   HealthConfig   `mapstructure:"health"`
+	UI       UIConfig       `mapstructure:"ui"`
 }
 
 type ServerConfig struct {
-	Host    string
-	Port    int
-	RunMode string
+	Host    string `mapstructure:"host"`
+	Port    int    `mapstructure:"port"`
+	RunMode string `mapstructure:"run_mode"`
 }
 
 type ServiceConfig struct {
-	Code    string
-	Name    string
-	Version string
+	Code    string `mapstructure:"code"`
+	Name    string `mapstructure:"name"`
+	Version string `mapstructure:"version"`
 }
 
 type PostgresConfig struct {
-	DSN                    string
-	MaxOpenConns           int
-	MaxIdleConns           int
-	ConnMaxLifetimeSeconds int
+	DSN                    string `mapstructure:"dsn"`
+	MaxOpenConns           int    `mapstructure:"max_open_conns"`
+	MaxIdleConns           int    `mapstructure:"max_idle_conns"`
+	ConnMaxLifetimeSeconds int    `mapstructure:"conn_max_lifetime_seconds"`
 }
 
 type RedisConfig struct {
-	Addr         string
-	Username     string
-	Password     string
-	DB           int
-	DialTimeout  time.Duration
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	PoolSize     int
+	Addr         string        `mapstructure:"addr"`
+	Username     string        `mapstructure:"username"`
+	Password     string        `mapstructure:"password"`
+	DB           int           `mapstructure:"db"`
+	DialTimeout  time.Duration `mapstructure:"dial_timeout"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+	PoolSize     int           `mapstructure:"pool_size"`
 }
 
 type JWTConfig struct {
-	Issuer                   string
-	AccessExpireMinutes      int
-	RefreshExpireHours       int
-	AutoRefreshBeforeMinutes int
-	PrivateKeyPath           string
-	PublicKeyPath            string
-	RefreshRotate            bool
+	Issuer                   string `mapstructure:"issuer"`
+	AccessExpireMinutes      int    `mapstructure:"access_expire_minutes"`
+	RefreshExpireHours       int    `mapstructure:"refresh_expire_hours"`
+	AutoRefreshBeforeMinutes int    `mapstructure:"auto_refresh_before_minutes"`
+	PrivateKeyPath           string `mapstructure:"private_key_path"`
+	PublicKeyPath            string `mapstructure:"public_key_path"`
+	RefreshRotate            bool   `mapstructure:"refresh_rotate"`
 }
 
 type OIDCConfig struct {
-	Enable                         bool
-	Issuer                         string
-	AuthorizationCodeExpireMinutes int
-	AccessTokenExpireMinutes       int
-	RefreshTokenExpireHours        int
+	Enable                         bool   `mapstructure:"enable"`
+	Issuer                         string `mapstructure:"issuer"`
+	AuthorizationCodeExpireMinutes int    `mapstructure:"authorization_code_expire_minutes"`
+	AccessTokenExpireMinutes       int    `mapstructure:"access_token_expire_minutes"`
+	RefreshTokenExpireHours        int    `mapstructure:"refresh_token_expire_hours"`
 }
 
 type LimitConfig struct {
-	Enable                     bool
-	DefaultCapacity            int
-	DefaultRatePerSecond       int
-	Dimensions                 []string
-	LocalFallbackCapacity      int
-	LocalFallbackRatePerSecond int
+	Enable                     bool     `mapstructure:"enable"`
+	DefaultCapacity            int      `mapstructure:"default_capacity"`
+	DefaultRatePerSecond       int      `mapstructure:"default_rate_per_second"`
+	Dimensions                 []string `mapstructure:"dimensions"`
+	LocalFallbackCapacity      int      `mapstructure:"local_fallback_capacity"`
+	LocalFallbackRatePerSecond int      `mapstructure:"local_fallback_rate_per_second"`
 }
 
 type SecurityConfig struct {
-	AuthFailMaxCount        int
-	AuthFailWindowMinutes   int
-	LockMinutes             int
-	M2MTimestampSkewSeconds int
-	PasswordBcryptCost      int
+	AuthFailMaxCount        int `mapstructure:"auth_fail_max_count"`
+	AuthFailWindowMinutes   int `mapstructure:"auth_fail_window_minutes"`
+	LockMinutes             int `mapstructure:"lock_minutes"`
+	M2MTimestampSkewSeconds int `mapstructure:"m2m_timestamp_skew_seconds"`
+	PasswordBcryptCost      int `mapstructure:"password_bcrypt_cost"`
 }
 
 type HealthConfig struct {
-	DefaultPath            string
-	DefaultIntervalSeconds int
-	MinIntervalSeconds     int
-	MaxIntervalSeconds     int
-	UnhealthyThreshold     int
+	DefaultPath            string `mapstructure:"default_path"`
+	DefaultIntervalSeconds int    `mapstructure:"default_interval_seconds"`
+	MinIntervalSeconds     int    `mapstructure:"min_interval_seconds"`
+	MaxIntervalSeconds     int    `mapstructure:"max_interval_seconds"`
+	UnhealthyThreshold     int    `mapstructure:"unhealthy_threshold"`
 }
 
 type UIConfig struct {
-	Enable     bool
-	PathPrefix string
+	Enable     bool   `mapstructure:"enable"`
+	PathPrefix string `mapstructure:"path_prefix"`
 }
 
 func Load() (*Config, error) {
@@ -120,11 +121,18 @@ func LoadFile(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg := Default()
-	values, err := readSimpleYAML(path)
-	if err != nil {
+	loader := viper.New()
+	loader.SetConfigFile(path)
+	loader.SetEnvPrefix("AUTH_LIMIT")
+	loader.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	loader.AutomaticEnv()
+	if err := loader.ReadInConfig(); err != nil {
 		return nil, err
 	}
-	applyValues(cfg, values)
+	expandLoaderSettings(loader)
+	if err := loader.Unmarshal(cfg); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -217,218 +225,34 @@ func (c *Config) Validate() error {
 }
 
 func LoadEnvFile(path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := stripComment(scanner.Text())
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "export ") && !strings.Contains(line, "=") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid env line: %s", line)
-		}
-		key := strings.TrimSpace(parts[0])
-		value := cleanScalar(parts[1])
-		value = os.ExpandEnv(value)
-		if key == "" {
-			return fmt.Errorf("env key cannot be empty")
-		}
-		if _, exists := os.LookupEnv(key); exists {
-			continue
-		}
-		if err := os.Setenv(key, value); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
+	return gotenv.Load(path)
 }
 
-func readSimpleYAML(path string) (map[string]string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	values := make(map[string]string)
-	var section, listKey string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		raw := scanner.Text()
-		line := stripComment(raw)
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		trimmed := strings.TrimSpace(line)
-		isTopLevel := len(line) == len(strings.TrimLeft(line, " \t"))
-		if isTopLevel && strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "- ") {
-			section = strings.TrimSuffix(trimmed, ":")
-			listKey = ""
-			continue
-		}
-		if strings.HasPrefix(trimmed, "- ") {
-			if listKey == "" {
-				return nil, fmt.Errorf("list item without key: %s", raw)
+func expandLoaderSettings(loader *viper.Viper) {
+	for _, key := range loader.AllKeys() {
+		switch value := loader.Get(key).(type) {
+		case string:
+			loader.Set(key, os.ExpandEnv(value))
+		case []any:
+			loader.Set(key, expandSlice(value))
+		case []string:
+			expanded := make([]string, 0, len(value))
+			for _, item := range value {
+				expanded = append(expanded, os.ExpandEnv(item))
 			}
-			item := cleanScalar(strings.TrimPrefix(trimmed, "- "))
-			if values[listKey] == "" {
-				values[listKey] = item
-			} else {
-				values[listKey] += "," + item
-			}
-			continue
+			loader.Set(key, expanded)
 		}
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid config line: %s", raw)
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-		fullKey := key
-		if section != "" {
-			fullKey = section + "." + key
-		}
-		if value == "" {
-			listKey = fullKey
-			values[listKey] = ""
-			continue
-		}
-		listKey = ""
-		values[fullKey] = cleanScalar(value)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return values, nil
 }
 
-func stripComment(line string) string {
-	inQuote := false
-	for i, r := range line {
-		if r == '"' {
-			inQuote = !inQuote
-			continue
-		}
-		if r == '#' && !inQuote {
-			return line[:i]
+func expandSlice(values []any) []any {
+	for i, value := range values {
+		switch typed := value.(type) {
+		case []any:
+			values[i] = expandSlice(typed)
+		case string:
+			values[i] = os.ExpandEnv(typed)
 		}
 	}
-	return line
-}
-
-func cleanScalar(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.Trim(value, `"`)
-	return os.ExpandEnv(value)
-}
-
-func applyValues(c *Config, values map[string]string) {
-	c.Server.Host = getString(values, "server.host", c.Server.Host)
-	c.Server.Port = getInt(values, "server.port", c.Server.Port)
-	c.Server.RunMode = getString(values, "server.run_mode", c.Server.RunMode)
-	c.Service.Code = getString(values, "service.code", c.Service.Code)
-	c.Service.Name = getString(values, "service.name", c.Service.Name)
-	c.Service.Version = getString(values, "service.version", c.Service.Version)
-	c.Postgres.DSN = getString(values, "postgres.dsn", c.Postgres.DSN)
-	c.Postgres.MaxOpenConns = getInt(values, "postgres.max_open_conns", c.Postgres.MaxOpenConns)
-	c.Postgres.MaxIdleConns = getInt(values, "postgres.max_idle_conns", c.Postgres.MaxIdleConns)
-	c.Postgres.ConnMaxLifetimeSeconds = getInt(values, "postgres.conn_max_lifetime_seconds", c.Postgres.ConnMaxLifetimeSeconds)
-	c.Redis.Addr = getString(values, "redis.addr", c.Redis.Addr)
-	c.Redis.Username = getString(values, "redis.username", c.Redis.Username)
-	c.Redis.Password = getString(values, "redis.password", c.Redis.Password)
-	c.Redis.DB = getInt(values, "redis.db", c.Redis.DB)
-	c.Redis.DialTimeout = getDuration(values, "redis.dial_timeout", c.Redis.DialTimeout)
-	c.Redis.ReadTimeout = getDuration(values, "redis.read_timeout", c.Redis.ReadTimeout)
-	c.Redis.WriteTimeout = getDuration(values, "redis.write_timeout", c.Redis.WriteTimeout)
-	c.Redis.PoolSize = getInt(values, "redis.pool_size", c.Redis.PoolSize)
-	c.JWT.Issuer = getString(values, "jwt.issuer", c.JWT.Issuer)
-	c.JWT.AccessExpireMinutes = getInt(values, "jwt.access_expire_minutes", c.JWT.AccessExpireMinutes)
-	c.JWT.RefreshExpireHours = getInt(values, "jwt.refresh_expire_hours", c.JWT.RefreshExpireHours)
-	c.JWT.AutoRefreshBeforeMinutes = getInt(values, "jwt.auto_refresh_before_minutes", c.JWT.AutoRefreshBeforeMinutes)
-	c.JWT.PrivateKeyPath = getString(values, "jwt.private_key_path", c.JWT.PrivateKeyPath)
-	c.JWT.PublicKeyPath = getString(values, "jwt.public_key_path", c.JWT.PublicKeyPath)
-	c.JWT.RefreshRotate = getBool(values, "jwt.refresh_rotate", c.JWT.RefreshRotate)
-	c.OIDC.Enable = getBool(values, "oidc.enable", c.OIDC.Enable)
-	c.OIDC.Issuer = getString(values, "oidc.issuer", c.OIDC.Issuer)
-	c.OIDC.AuthorizationCodeExpireMinutes = getInt(values, "oidc.authorization_code_expire_minutes", c.OIDC.AuthorizationCodeExpireMinutes)
-	c.OIDC.AccessTokenExpireMinutes = getInt(values, "oidc.access_token_expire_minutes", c.OIDC.AccessTokenExpireMinutes)
-	c.OIDC.RefreshTokenExpireHours = getInt(values, "oidc.refresh_token_expire_hours", c.OIDC.RefreshTokenExpireHours)
-	c.Limit.Enable = getBool(values, "limit.enable", c.Limit.Enable)
-	c.Limit.DefaultCapacity = getInt(values, "limit.default_capacity", c.Limit.DefaultCapacity)
-	c.Limit.DefaultRatePerSecond = getInt(values, "limit.default_rate_per_second", c.Limit.DefaultRatePerSecond)
-	c.Limit.Dimensions = getStringSlice(values, "limit.dimensions", c.Limit.Dimensions)
-	c.Limit.LocalFallbackCapacity = getInt(values, "limit.local_fallback_capacity", c.Limit.LocalFallbackCapacity)
-	c.Limit.LocalFallbackRatePerSecond = getInt(values, "limit.local_fallback_rate_per_second", c.Limit.LocalFallbackRatePerSecond)
-	c.Security.AuthFailMaxCount = getInt(values, "security.auth_fail_max_count", c.Security.AuthFailMaxCount)
-	c.Security.AuthFailWindowMinutes = getInt(values, "security.auth_fail_window_minutes", c.Security.AuthFailWindowMinutes)
-	c.Security.LockMinutes = getInt(values, "security.lock_minutes", c.Security.LockMinutes)
-	c.Security.M2MTimestampSkewSeconds = getInt(values, "security.m2m_timestamp_skew_seconds", c.Security.M2MTimestampSkewSeconds)
-	c.Security.PasswordBcryptCost = getInt(values, "security.password_bcrypt_cost", c.Security.PasswordBcryptCost)
-	c.Health.DefaultPath = getString(values, "health.default_path", c.Health.DefaultPath)
-	c.Health.DefaultIntervalSeconds = getInt(values, "health.default_interval_seconds", c.Health.DefaultIntervalSeconds)
-	c.Health.MinIntervalSeconds = getInt(values, "health.min_interval_seconds", c.Health.MinIntervalSeconds)
-	c.Health.MaxIntervalSeconds = getInt(values, "health.max_interval_seconds", c.Health.MaxIntervalSeconds)
-	c.Health.UnhealthyThreshold = getInt(values, "health.unhealthy_threshold", c.Health.UnhealthyThreshold)
-	c.UI.Enable = getBool(values, "ui.enable", c.UI.Enable)
-	c.UI.PathPrefix = getString(values, "ui.path_prefix", c.UI.PathPrefix)
-}
-
-func getString(values map[string]string, key, fallback string) string {
-	if value, ok := values[key]; ok {
-		return value
-	}
-	return fallback
-}
-
-func getInt(values map[string]string, key string, fallback int) int {
-	if value, ok := values[key]; ok {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func getBool(values map[string]string, key string, fallback bool) bool {
-	if value, ok := values[key]; ok {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func getDuration(values map[string]string, key string, fallback time.Duration) time.Duration {
-	if value, ok := values[key]; ok {
-		if parsed, err := time.ParseDuration(value); err == nil {
-			return parsed
-		}
-	}
-	return fallback
-}
-
-func getStringSlice(values map[string]string, key string, fallback []string) []string {
-	value, ok := values[key]
-	if !ok || value == "" {
-		return fallback
-	}
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	if len(result) == 0 {
-		return fallback
-	}
-	return result
+	return values
 }
