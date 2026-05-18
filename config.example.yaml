@@ -1,0 +1,70 @@
+server:
+  host: "http://127.0.0.1:8080"
+  port: 8080
+  run_mode: "dev"
+
+service:
+  code: "authlimit"
+  name: "鉴权限流核心服务"
+  version: "v0.1.0"
+
+postgres:
+  dsn: "host=127.0.0.1 port=5432 user=postgres password=postgres dbname=auth_limit_db sslmode=disable"
+  max_open_conns: 20
+  max_idle_conns: 10
+  conn_max_lifetime_seconds: 300
+
+redis:
+  addr: "127.0.0.1:6379"
+  username: "authlimit_user"
+  password: ""
+  db: 0
+  dial_timeout: "500ms"
+  read_timeout: "1s"
+  write_timeout: "1s"
+  pool_size: 20
+
+jwt:
+  issuer: "authlimit"
+  access_expire_minutes: 30
+  refresh_expire_hours: 24
+  auto_refresh_before_minutes: 5
+  private_key_path: "./certs/jwt_private.pem"
+  public_key_path: "./certs/jwt_public.pem"
+  refresh_rotate: true
+
+oidc:
+  enable: true
+  issuer: "http://127.0.0.1:8080"
+  authorization_code_expire_minutes: 5
+  access_token_expire_minutes: 30
+  refresh_token_expire_hours: 24
+
+limit:
+  enable: true
+  default_capacity: 100
+  default_rate_per_second: 10
+  dimensions:
+    - ip
+    - user_id
+    - app_id
+  local_fallback_capacity: 50
+  local_fallback_rate_per_second: 5
+
+security:
+  auth_fail_max_count: 5
+  auth_fail_window_minutes: 10
+  lock_minutes: 15
+  m2m_timestamp_skew_seconds: 30
+  password_bcrypt_cost: 12
+
+health:
+  default_path: "/health"
+  default_interval_seconds: 30
+  min_interval_seconds: 10
+  max_interval_seconds: 300
+  unhealthy_threshold: 3
+
+ui:
+  enable: true
+  path_prefix: "/ui/"

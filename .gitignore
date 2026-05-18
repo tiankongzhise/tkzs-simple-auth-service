@@ -26,7 +26,28 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
+
+# Local config and secrets
+config.yaml
+config.*.yaml
+!config.example.yaml
+certs/
+*.pem
+*.key
+*.crt
+
+# Build outputs
+bin/
+dist/
+build/
+tmp/
+
+# Runtime files
+*.log
+logs/
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
