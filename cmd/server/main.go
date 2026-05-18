@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/bootstrap"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/database"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/server"
 )
@@ -21,6 +22,9 @@ func main() {
 	}
 	if err := database.AutoMigrate(db); err != nil {
 		log.Fatalf("migrate database: %v", err)
+	}
+	if err := bootstrap.Initialize(db, cfg); err != nil {
+		log.Fatalf("bootstrap system data: %v", err)
 	}
 
 	router := server.NewRouter(cfg)
