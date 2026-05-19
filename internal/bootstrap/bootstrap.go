@@ -45,12 +45,22 @@ func ensurePermissions(tx *gorm.DB) ([]model.Permission, error) {
 		}).Create(&permission).Error; err != nil {
 			return nil, err
 		}
-		if err := tx.Where("code = ?", seed.Code).First(&permission).Error; err != nil {
+		var persisted model.Permission
+		if err := queryPermissionByCode(tx, seed.Code, &persisted).Error; err != nil {
 			return nil, err
 		}
-		permissions = append(permissions, permission)
+		permissions = append(permissions, persisted)
 	}
 	return permissions, nil
+}
+
+func queryPermissionByCode(tx *gorm.DB, code string, permission *model.Permission) *gorm.DB {
+	var persisted model.Permission
+	result := tx.Where("code = ?", code).First(&persisted)
+	if result.Error == nil && permission != nil {
+		*permission = persisted
+	}
+	return result
 }
 
 func ensureAdminRole(tx *gorm.DB, permissions []model.Permission) (*model.Role, error) {
