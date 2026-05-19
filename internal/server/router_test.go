@@ -55,6 +55,22 @@ func TestRequestIDMiddlewareGeneratesMissingRequestID(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointExposed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(config.Default())
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("metrics body is empty")
+	}
+}
+
 func TestAPIRoutesUseMiddlewares(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := NewRouter(config.Default(), WithAPIRoutes(

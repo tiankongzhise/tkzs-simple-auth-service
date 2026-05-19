@@ -10,6 +10,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/metrics"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 )
 
@@ -161,7 +162,11 @@ func (s *Service) Verify(ctx context.Context, input VerifyInput) (*VerifyResult,
 }
 
 func (s *Service) record(ctx context.Context, serviceID string, dimension string, value string, result *VerifyResult) {
-	if s.recorder == nil || result == nil {
+	if result == nil {
+		return
+	}
+	metrics.RecordLimit(serviceID, dimension, result.Allowed)
+	if s.recorder == nil {
 		return
 	}
 	_ = s.recorder.RecordLimit(ctx, serviceID, dimension, value, result.Allowed, result.Remaining, result.ResetAt)

@@ -2,8 +2,10 @@ package server
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/metrics"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/response"
 )
 
@@ -72,7 +74,7 @@ func NewRouter(cfg *config.Config, options ...Option) *gin.Engine {
 	}
 
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery(), requestIDMiddleware())
+	router.Use(gin.Logger(), gin.Recovery(), requestIDMiddleware(), metrics.Middleware())
 
 	router.GET("/health", func(c *gin.Context) {
 		response.OK(c, healthResponse{
@@ -81,6 +83,7 @@ func NewRouter(cfg *config.Config, options ...Option) *gin.Engine {
 			Version: cfg.Service.Version,
 		})
 	})
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	if opts.oidc != nil {
 		opts.oidc.RegisterRoutes(router)
 	}
