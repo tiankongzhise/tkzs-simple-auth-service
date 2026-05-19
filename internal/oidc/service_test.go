@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestDiscoveryReturnsOIDCEndpoints(t *testing.T) {
-	service := NewService(config.Default(), mustKeyProvider(t))
+	service := NewService(config.Default(), mustKeyProvider(t), nil)
 
 	document, err := service.Discovery()
 	if err != nil {
@@ -24,7 +25,7 @@ func TestDiscoveryReturnsOIDCEndpoints(t *testing.T) {
 }
 
 func TestJWKSExportsRSAPublicKey(t *testing.T) {
-	service := NewService(config.Default(), mustKeyProvider(t))
+	service := NewService(config.Default(), mustKeyProvider(t), nil)
 
 	keys, err := service.JWKS()
 	if err != nil {
@@ -45,11 +46,65 @@ func TestJWKSExportsRSAPublicKey(t *testing.T) {
 func TestOIDCDisabled(t *testing.T) {
 	cfg := config.Default()
 	cfg.OIDC.Enable = false
-	service := NewService(cfg, mustKeyProvider(t))
+	service := NewService(cfg, mustKeyProvider(t), nil)
 
 	if _, err := service.Discovery(); err != ErrOIDCDisabled {
 		t.Fatalf("Discovery() error = %v", err)
 	}
+}
+
+func TestTokenRefreshGrant(t *testing.T) {
+	service := NewService(config.Default(), mustKeyProvider(t), &fakeTokenService{
+		token: &TokenResult{TokenType: "Bearer", AccessToken: "access-token", RefreshToken: "refresh-token"},
+	})
+
+	result, err := service.Token(t.Context(), TokenInput{
+		GrantType:    "refresh_token",
+		RefreshToken: "old-refresh",
+	})
+	if err != nil {
+		t.Fatalf("Token() error = %v", err)
+	}
+	if result.AccessToken != "access-token" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestTokenRejectsUnsupportedGrant(t *testing.T) {
+	service := NewService(config.Default(), mustKeyProvider(t), &fakeTokenService{})
+
+	_, err := service.Token(t.Context(), TokenInput{GrantType: "client_credentials"})
+	if err != ErrUnsupportedGrant {
+		t.Fatalf("Token() error = %v", err)
+	}
+}
+
+func TestUserInfoUsesAccessToken(t *testing.T) {
+	service := NewService(config.Default(), mustKeyProvider(t), &fakeTokenService{
+		verify: &VerifyResult{UserID: "user-001", Roles: []string{"admin"}, Permissions: []string{"user:manage"}},
+	})
+
+	info, err := service.UserInfo(t.Context(), "access-token")
+	if err != nil {
+		t.Fatalf("UserInfo() error = %v", err)
+	}
+	if info.Subject != "user-001" || len(info.Roles) != 1 || len(info.Permissions) != 1 {
+		t.Fatalf("userinfo = %#v", info)
+	}
+}
+
+type fakeTokenService struct {
+	token  *TokenResult
+	verify *VerifyResult
+	err    error
+}
+
+func (s *fakeTokenService) Refresh(_ context.Context, _ string) (*TokenResult, error) {
+	return s.token, s.err
+}
+
+func (s *fakeTokenService) Verify(_ context.Context, _ string) (*VerifyResult, error) {
+	return s.verify, s.err
 }
 
 type staticKeyProvider struct {

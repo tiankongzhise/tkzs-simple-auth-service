@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -13,17 +14,52 @@ import (
 )
 
 var (
-	ErrOIDCDisabled       = errors.New("oidc disabled")
-	ErrPublicKeyNotLoaded = errors.New("oidc public key not loaded")
+	ErrOIDCDisabled            = errors.New("oidc disabled")
+	ErrPublicKeyNotLoaded      = errors.New("oidc public key not loaded")
+	ErrUnsupportedGrant        = errors.New("unsupported oidc grant")
+	ErrInvalidToken            = errors.New("invalid oidc token")
+	ErrTokenServiceUnavailable = errors.New("oidc token service unavailable")
 )
 
 type KeyProvider interface {
 	PublicKey() *rsa.PublicKey
 }
 
+type TokenService interface {
+	Refresh(ctx context.Context, refreshToken string) (*TokenResult, error)
+	Verify(ctx context.Context, accessToken string) (*VerifyResult, error)
+}
+
 type Service struct {
-	cfg  *config.Config
-	keys KeyProvider
+	cfg    *config.Config
+	keys   KeyProvider
+	tokens TokenService
+}
+
+type TokenResult struct {
+	TokenType             string `json:"token_type"`
+	AccessToken           string `json:"access_token"`
+	ExpiresIn             int64  `json:"expires_in"`
+	RefreshToken          string `json:"refresh_token,omitempty"`
+	RefreshTokenExpiresIn int64  `json:"refresh_token_expires_in,omitempty"`
+}
+
+type VerifyResult struct {
+	UserID      string
+	Roles       []string
+	Permissions []string
+	ExpiresIn   int64
+}
+
+type TokenInput struct {
+	GrantType    string
+	RefreshToken string
+}
+
+type UserInfo struct {
+	Subject     string   `json:"sub"`
+	Roles       []string `json:"roles,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 type DiscoveryDocument struct {
@@ -53,8 +89,8 @@ type JWK struct {
 	Exponent  string `json:"e"`
 }
 
-func NewService(cfg *config.Config, keys KeyProvider) *Service {
-	return &Service{cfg: cfg, keys: keys}
+func NewService(cfg *config.Config, keys KeyProvider, tokens TokenService) *Service {
+	return &Service{cfg: cfg, keys: keys, tokens: tokens}
 }
 
 func (s *Service) Discovery() (*DiscoveryDocument, error) {
@@ -86,6 +122,40 @@ func (s *Service) JWKS() (*JWKS, error) {
 		return nil, ErrPublicKeyNotLoaded
 	}
 	return &JWKS{Keys: []JWK{jwkFromPublicKey(publicKey)}}, nil
+}
+
+func (s *Service) Token(ctx context.Context, input TokenInput) (*TokenResult, error) {
+	if !s.cfg.OIDC.Enable {
+		return nil, ErrOIDCDisabled
+	}
+	if input.GrantType != "refresh_token" || strings.TrimSpace(input.RefreshToken) == "" {
+		return nil, ErrUnsupportedGrant
+	}
+	if s.tokens == nil {
+		return nil, ErrTokenServiceUnavailable
+	}
+	return s.tokens.Refresh(ctx, input.RefreshToken)
+}
+
+func (s *Service) UserInfo(ctx context.Context, accessToken string) (*UserInfo, error) {
+	if !s.cfg.OIDC.Enable {
+		return nil, ErrOIDCDisabled
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return nil, ErrInvalidToken
+	}
+	if s.tokens == nil {
+		return nil, ErrTokenServiceUnavailable
+	}
+	result, err := s.tokens.Verify(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	return &UserInfo{
+		Subject:     result.UserID,
+		Roles:       result.Roles,
+		Permissions: result.Permissions,
+	}, nil
 }
 
 func (s *Service) issuer() string {
