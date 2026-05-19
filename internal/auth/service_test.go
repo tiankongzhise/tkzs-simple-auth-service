@@ -78,12 +78,15 @@ func TestLoginReturnsUnavailableOnRedisError(t *testing.T) {
 	service, _, cache := testService(t)
 	cache.err = errors.New("redis down")
 
-	_, err := service.Login(context.Background(), LoginInput{
+	result, err := service.Login(context.Background(), LoginInput{
 		Username: "admin",
 		Password: "Zqlt_123456789",
 	})
-	if !errors.Is(err, ErrAuthUnavailable) {
-		t.Fatalf("Login() error = %v", err)
+	if err != nil {
+		t.Fatalf("Login() should fall back to database, error = %v", err)
+	}
+	if result.AccessToken == "" || result.RefreshToken == "" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
@@ -128,9 +131,76 @@ func TestVerifyRejectsMissingRedisState(t *testing.T) {
 		}
 	}
 
+	result, err := service.Verify(context.Background(), login.AccessToken)
+	if err != nil {
+		t.Fatalf("Verify() should fall back to store, error = %v", err)
+	}
+	if result.UserID != "user-001" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestVerifyUsesCacheWhenStoreUnavailableAndCacheStateExists(t *testing.T) {
+	service, store, _ := testService(t)
+	login, err := service.Login(context.Background(), LoginInput{
+		Username: "admin",
+		Password: "Zqlt_123456789",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	store.err = errors.New("postgres down")
+
+	result, err := service.Verify(context.Background(), login.AccessToken)
+	if err != nil {
+		t.Fatalf("Verify() should trust Redis state during store outage, error = %v", err)
+	}
+	if result.UserID != "user-001" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestVerifyRejectsRevokedTokenEvenIfRedisStateRemains(t *testing.T) {
+	service, store, _ := testService(t)
+	login, err := service.Login(context.Background(), LoginInput{
+		Username: "admin",
+		Password: "Zqlt_123456789",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	store.savedTokens[0].Status = model.TokenStatusRevoked
+
 	_, err = service.Verify(context.Background(), login.AccessToken)
 	if !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("Verify() error = %v", err)
+	}
+}
+
+func TestRefreshAndLogoutContinueWhenRedisIsDown(t *testing.T) {
+	service, store, cache := testService(t)
+	login, err := service.Login(context.Background(), LoginInput{
+		Username: "admin",
+		Password: "Zqlt_123456789",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	cache.err = errors.New("redis down")
+
+	refreshed, err := service.Refresh(context.Background(), login.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh() should fall back to database, error = %v", err)
+	}
+	if refreshed.AccessToken == "" || refreshed.RefreshToken == "" {
+		t.Fatalf("refreshed = %#v", refreshed)
+	}
+
+	if err := service.Logout(context.Background(), refreshed.AccessToken, refreshed.RefreshToken); err != nil {
+		t.Fatalf("Logout() should persist revocation without Redis, error = %v", err)
+	}
+	if len(store.revokedJTIs) == 0 {
+		t.Fatalf("revoked jtis = %#v", store.revokedJTIs)
 	}
 }
 
@@ -195,6 +265,7 @@ type fakeUserStore struct {
 	savedTokens     []model.AuthToken
 	revokedJTIs     []string
 	lastLoginUserID string
+	err             error
 }
 
 func (s *fakeUserStore) FindUserByUsername(_ context.Context, username string) (*model.User, error) {
@@ -214,6 +285,18 @@ func (s *fakeUserStore) FindUserByID(_ context.Context, userID string) (*model.U
 func (s *fakeUserStore) SaveAuthTokens(_ context.Context, tokens []model.AuthToken) error {
 	s.savedTokens = append(s.savedTokens, tokens...)
 	return nil
+}
+
+func (s *fakeUserStore) FindActiveAuthToken(_ context.Context, jti string, tokenType string, now time.Time) (*model.AuthToken, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	for _, token := range s.savedTokens {
+		if token.JTI == jti && token.TokenType == tokenType && token.Status == model.TokenStatusActive && token.ExpiresAt.After(now) {
+			return &token, nil
+		}
+	}
+	return nil, ErrTokenRecordNotFound
 }
 
 func (s *fakeUserStore) RevokeAuthTokens(_ context.Context, jtis []string, _ time.Time) error {

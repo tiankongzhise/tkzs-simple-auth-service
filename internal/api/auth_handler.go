@@ -84,6 +84,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		writeAuthError(c, err)
 		return
 	}
+	h.recordAuth(c, result.UserID, "user", "login", "success", "")
 	response.OK(c, result)
 }
 
@@ -95,9 +96,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 	result, err := h.service.Refresh(c.Request.Context(), req.RefreshToken)
 	if err != nil {
+		h.recordAuth(c, "", "user", "token_refresh", "failure", err.Error())
 		writeTokenError(c, err)
 		return
 	}
+	h.recordAuth(c, result.UserID, "user", "token_refresh", "success", "")
 	response.OK(c, result)
 }
 
@@ -128,9 +131,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 	if err := h.service.Logout(c.Request.Context(), token, req.RefreshToken); err != nil {
+		h.recordAuth(c, "", "user", "logout", "failure", err.Error())
 		writeTokenError(c, err)
 		return
 	}
+	h.recordAuth(c, "", "user", "logout", "success", "")
 	response.OK(c, gin.H{"loggedOut": true})
 }
 
@@ -151,10 +156,15 @@ func (h *AuthHandler) M2M(c *gin.Context) {
 		writeM2MError(c, err)
 		return
 	}
+	h.recordAuth(c, result.AppID, "app", "m2m", "success", "")
 	response.OK(c, result)
 }
 
 func (h *AuthHandler) recordAuthFailure(c *gin.Context, subjectID string, subjectType string, event string, err error) {
+	h.recordAuth(c, subjectID, subjectType, event, "failure", err.Error())
+}
+
+func (h *AuthHandler) recordAuth(c *gin.Context, subjectID string, subjectType string, event string, result string, reason string) {
 	if h.audit == nil {
 		return
 	}
@@ -164,8 +174,8 @@ func (h *AuthHandler) recordAuthFailure(c *gin.Context, subjectID string, subjec
 		Event:       event,
 		IP:          c.ClientIP(),
 		UserAgent:   c.Request.UserAgent(),
-		Result:      "failure",
-		Reason:      err.Error(),
+		Result:      result,
+		Reason:      reason,
 	})
 }
 

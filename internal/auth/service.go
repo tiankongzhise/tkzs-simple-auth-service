@@ -24,6 +24,7 @@ var (
 type UserStore interface {
 	FindUserByUsername(ctx context.Context, username string) (*model.User, error)
 	FindUserByID(ctx context.Context, userID string) (*model.User, error)
+	FindActiveAuthToken(ctx context.Context, jti string, tokenType string, now time.Time) (*model.AuthToken, error)
 	SaveAuthTokens(ctx context.Context, tokens []model.AuthToken) error
 	RevokeAuthTokens(ctx context.Context, jtis []string, at time.Time) error
 	UpdateLastLogin(ctx context.Context, userID string, at time.Time) error
@@ -56,6 +57,7 @@ type LoginInput struct {
 
 type LoginResult struct {
 	TokenType             string    `json:"tokenType"`
+	UserID                string    `json:"-"`
 	AccessToken           string    `json:"accessToken"`
 	AccessTokenExpiresAt  time.Time `json:"accessTokenExpiresAt"`
 	RefreshToken          string    `json:"refreshToken"`
@@ -101,9 +103,7 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, er
 	if user.Status != model.StatusEnabled {
 		return nil, ErrInvalidCredentials
 	}
-	if locked, err := s.isLocked(ctx, user.ID); err != nil {
-		return nil, ErrAuthUnavailable
-	} else if locked {
+	if locked, err := s.isLocked(ctx, user.ID); err == nil && locked {
 		return nil, ErrAccountLocked
 	}
 
@@ -112,15 +112,11 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, er
 		return nil, ErrAuthUnavailable
 	}
 	if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(input.Password)) != nil {
-		if err := s.registerFailure(ctx, user.ID); err != nil {
-			return nil, ErrAuthUnavailable
-		}
+		_ = s.registerFailure(ctx, user.ID)
 		return nil, ErrInvalidCredentials
 	}
 
-	if err := s.clearFailures(ctx, user.ID); err != nil {
-		return nil, ErrAuthUnavailable
-	}
+	_ = s.clearFailures(ctx, user.ID)
 	subject := jwtx.Subject{
 		ID:          user.ID,
 		Roles:       roleCodes(user.Roles),
@@ -149,18 +145,15 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (*LoginResult, er
 	if err := s.store.SaveAuthTokens(ctx, tokens); err != nil {
 		return nil, err
 	}
-	if err := s.writeTokenState(ctx, pair.AccessJTI, model.TokenTypeAccess, user.ID, pair.AccessExpiresAt); err != nil {
-		return nil, ErrAuthUnavailable
-	}
-	if err := s.writeTokenState(ctx, pair.RefreshJTI, model.TokenTypeRefresh, user.ID, pair.RefreshExpiresAt); err != nil {
-		return nil, ErrAuthUnavailable
-	}
+	_ = s.writeTokenState(ctx, pair.AccessJTI, model.TokenTypeAccess, user.ID, pair.AccessExpiresAt)
+	_ = s.writeTokenState(ctx, pair.RefreshJTI, model.TokenTypeRefresh, user.ID, pair.RefreshExpiresAt)
 	if err := s.store.UpdateLastLogin(ctx, user.ID, s.now().UTC()); err != nil {
 		return nil, err
 	}
 
 	return &LoginResult{
 		TokenType:             "Bearer",
+		UserID:                user.ID,
 		AccessToken:           pair.AccessToken,
 		AccessTokenExpiresAt:  pair.AccessExpiresAt,
 		RefreshToken:          pair.RefreshToken,
@@ -200,13 +193,13 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 		if err := s.saveAndCachePair(ctx, user.ID, pair); err != nil {
 			return nil, err
 		}
-		if err := s.revokeToken(ctx, claims.ID, model.TokenTypeRefresh, claims.ExpiresAt.Time); err != nil {
-			return nil, err
-		}
 		if err := s.store.RevokeAuthTokens(ctx, []string{claims.ID}, s.now().UTC()); err != nil {
 			return nil, err
 		}
-		return loginResultFromPair(pair), nil
+		_ = s.revokeToken(ctx, claims.ID, model.TokenTypeRefresh, claims.ExpiresAt.Time)
+		result := loginResultFromPair(pair)
+		result.UserID = user.ID
+		return result, nil
 	}
 
 	access, err := s.jwt.Issue(subject, model.TokenTypeAccess)
@@ -222,11 +215,10 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 	}}); err != nil {
 		return nil, err
 	}
-	if err := s.writeTokenState(ctx, access.JTI, model.TokenTypeAccess, user.ID, access.ExpiresAt); err != nil {
-		return nil, ErrAuthUnavailable
-	}
+	_ = s.writeTokenState(ctx, access.JTI, model.TokenTypeAccess, user.ID, access.ExpiresAt)
 	return &LoginResult{
 		TokenType:             "Bearer",
+		UserID:                user.ID,
 		AccessToken:           access.Token,
 		AccessTokenExpiresAt:  access.ExpiresAt,
 		RefreshToken:          refreshToken,
@@ -256,7 +248,9 @@ func (s *Service) IssueForUser(ctx context.Context, userID string) (*LoginResult
 	if err := s.saveAndCachePair(ctx, user.ID, pair); err != nil {
 		return nil, err
 	}
-	return loginResultFromPair(pair), nil
+	result := loginResultFromPair(pair)
+	result.UserID = user.ID
+	return result, nil
 }
 
 func (s *Service) Verify(ctx context.Context, accessToken string) (*VerifyResult, error) {
@@ -291,9 +285,7 @@ func (s *Service) Verify(ctx context.Context, accessToken string) (*VerifyResult
 		}}); err != nil {
 			return nil, err
 		}
-		if err := s.writeTokenState(ctx, issued.JTI, model.TokenTypeAccess, claims.Subject, issued.ExpiresAt); err != nil {
-			return nil, ErrAuthUnavailable
-		}
+		_ = s.writeTokenState(ctx, issued.JTI, model.TokenTypeAccess, claims.Subject, issued.ExpiresAt)
 		result.RenewedAccessToken = issued.Token
 		result.RenewedAccessTokenExpiry = issued.ExpiresAt
 	}
@@ -310,13 +302,12 @@ func (s *Service) Logout(ctx context.Context, accessToken string, refreshToken s
 		return ErrInvalidToken
 	}
 	jtis := []string{accessClaims.ID, refreshClaims.ID}
-	if err := s.revokeToken(ctx, accessClaims.ID, model.TokenTypeAccess, accessClaims.ExpiresAt.Time); err != nil {
+	if err := s.store.RevokeAuthTokens(ctx, jtis, s.now().UTC()); err != nil {
 		return err
 	}
-	if err := s.revokeToken(ctx, refreshClaims.ID, model.TokenTypeRefresh, refreshClaims.ExpiresAt.Time); err != nil {
-		return err
-	}
-	return s.store.RevokeAuthTokens(ctx, jtis, s.now().UTC())
+	_ = s.revokeToken(ctx, accessClaims.ID, model.TokenTypeAccess, accessClaims.ExpiresAt.Time)
+	_ = s.revokeToken(ctx, refreshClaims.ID, model.TokenTypeRefresh, refreshClaims.ExpiresAt.Time)
+	return nil
 }
 
 func (s *Service) isLocked(ctx context.Context, userID string) (bool, error) {
@@ -333,14 +324,11 @@ func (s *Service) passwordHash(ctx context.Context, user *model.User) (string, e
 		return "", err
 	}
 	hash, err := s.cache.Get(ctx, key)
-	if err != nil {
-		return "", err
-	}
-	if hash != "" {
+	if err == nil && hash != "" {
 		return hash, nil
 	}
-	if err := s.cache.Set(ctx, key, user.PasswordHash, time.Duration(s.cfg.Security.AuthFailWindowMinutes)*time.Minute*3); err != nil {
-		return "", err
+	if err == nil {
+		_ = s.cache.Set(ctx, key, user.PasswordHash, time.Duration(s.cfg.Security.AuthFailWindowMinutes)*time.Minute*3)
 	}
 	return user.PasswordHash, nil
 }
@@ -398,21 +386,33 @@ func (s *Service) ensureTokenUsable(ctx context.Context, jti string, tokenType s
 		return err
 	}
 	blacklisted, err := s.cache.Exists(ctx, blacklistKey)
-	if err != nil {
-		return ErrAuthUnavailable
-	}
-	if blacklisted {
+	if err == nil && blacklisted {
 		return ErrTokenRevoked
 	}
 	stateKey, err := s.cache.KeyBuilder().Build("jwt", tokenType, jti)
 	if err != nil {
 		return err
 	}
-	exists, err := s.cache.Exists(ctx, stateKey)
+	exists, existsErr := s.cache.Exists(ctx, stateKey)
+	if existsErr == nil && exists {
+		err := s.ensureTokenUsableFromStore(ctx, jti, tokenType)
+		if err == nil || errors.Is(err, ErrInvalidToken) {
+			return err
+		}
+		return nil
+	}
+	return s.ensureTokenUsableFromStore(ctx, jti, tokenType)
+}
+
+func (s *Service) ensureTokenUsableFromStore(ctx context.Context, jti string, tokenType string) error {
+	token, err := s.store.FindActiveAuthToken(ctx, jti, tokenType, s.now().UTC())
 	if err != nil {
+		if errors.Is(err, ErrTokenRecordNotFound) {
+			return ErrInvalidToken
+		}
 		return ErrAuthUnavailable
 	}
-	if !exists {
+	if token.Status != model.TokenStatusActive || token.ExpiresAt.Before(s.now().UTC()) {
 		return ErrInvalidToken
 	}
 	return nil
@@ -428,14 +428,14 @@ func (s *Service) revokeToken(ctx context.Context, jti string, tokenType string,
 		ttl = time.Second
 	}
 	if err := s.cache.Set(ctx, blacklistKey, "1", ttl); err != nil {
-		return ErrAuthUnavailable
+		return err
 	}
 	stateKey, err := s.cache.KeyBuilder().Build("jwt", tokenType, jti)
 	if err != nil {
 		return err
 	}
 	if err := s.cache.Del(ctx, stateKey); err != nil {
-		return ErrAuthUnavailable
+		return err
 	}
 	return nil
 }
@@ -460,12 +460,8 @@ func (s *Service) saveAndCachePair(ctx context.Context, userID string, pair *jwt
 	if err := s.store.SaveAuthTokens(ctx, tokens); err != nil {
 		return err
 	}
-	if err := s.writeTokenState(ctx, pair.AccessJTI, model.TokenTypeAccess, userID, pair.AccessExpiresAt); err != nil {
-		return ErrAuthUnavailable
-	}
-	if err := s.writeTokenState(ctx, pair.RefreshJTI, model.TokenTypeRefresh, userID, pair.RefreshExpiresAt); err != nil {
-		return ErrAuthUnavailable
-	}
+	_ = s.writeTokenState(ctx, pair.AccessJTI, model.TokenTypeAccess, userID, pair.AccessExpiresAt)
+	_ = s.writeTokenState(ctx, pair.RefreshJTI, model.TokenTypeRefresh, userID, pair.RefreshExpiresAt)
 	return nil
 }
 

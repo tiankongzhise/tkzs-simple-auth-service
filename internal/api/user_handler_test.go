@@ -103,6 +103,20 @@ func TestUserHandlerUpdatePassword(t *testing.T) {
 	}
 }
 
+func TestUserHandlerUnlock(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUserHandler(&fakeUserService{})
+	router := testUserRouter(handler, []string{"admin"}, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/users/user-002/unlock", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func testUserRouter(handler *UserHandler, roles []string, permissions []string) *gin.Engine {
 	router := gin.New()
 	group := router.Group("/api")
@@ -143,6 +157,10 @@ func (s *fakeUserService) UpdateStatus(_ context.Context, _ usersvc.Actor, _ use
 }
 
 func (s *fakeUserService) UpdatePassword(_ context.Context, _ usersvc.Actor, _ usersvc.UpdatePasswordInput) error {
+	return s.err
+}
+
+func (s *fakeUserService) Unlock(_ context.Context, _ usersvc.Actor, _ usersvc.UnlockInput) error {
 	return s.err
 }
 

@@ -10,6 +10,7 @@ import (
 )
 
 var ErrUserNotFound = errors.New("user not found")
+var ErrTokenRecordNotFound = errors.New("token record not found")
 
 type GormStore struct {
 	db *gorm.DB
@@ -51,6 +52,20 @@ func (s *GormStore) FindUserByID(ctx context.Context, userID string) (*model.Use
 
 func (s *GormStore) SaveAuthTokens(ctx context.Context, tokens []model.AuthToken) error {
 	return s.db.WithContext(ctx).Create(&tokens).Error
+}
+
+func (s *GormStore) FindActiveAuthToken(ctx context.Context, jti string, tokenType string, now time.Time) (*model.AuthToken, error) {
+	var token model.AuthToken
+	err := s.db.WithContext(ctx).
+		Where("jti = ? AND token_type = ? AND status = ? AND expires_at > ?", jti, tokenType, model.TokenStatusActive, now).
+		First(&token).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrTokenRecordNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &token, nil
 }
 
 func (s *GormStore) RevokeAuthTokens(ctx context.Context, jtis []string, at time.Time) error {

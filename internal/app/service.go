@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/secret"
 )
 
 var (
@@ -28,7 +29,10 @@ type Store interface {
 
 type Service struct {
 	store Store
+	codec secret.Codec
 }
+
+type Option func(*Service)
 
 type Actor struct {
 	UserID  string
@@ -54,8 +58,20 @@ type Result struct {
 	AppSecret string    `json:"appSecret,omitempty"`
 }
 
-func NewService(store Store) *Service {
-	return &Service{store: store}
+func WithSecretCodec(codec secret.Codec) Option {
+	return func(s *Service) {
+		if codec != nil {
+			s.codec = codec
+		}
+	}
+}
+
+func NewService(store Store, options ...Option) *Service {
+	service := &Service{store: store, codec: secret.LegacyPassthroughCodec{}}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *Service) Create(ctx context.Context, actor Actor, input CreateInput) (*Result, error) {
@@ -70,10 +86,14 @@ func (s *Service) Create(ctx context.Context, actor Actor, input CreateInput) (*
 	if err != nil {
 		return nil, err
 	}
+	storedSecret, err := s.codec.EncryptString(secret)
+	if err != nil {
+		return nil, err
+	}
 	record := &model.App{
 		AppID:       appID,
 		Name:        strings.TrimSpace(input.Name),
-		SecretHash:  secret,
+		SecretHash:  storedSecret,
 		OwnerUserID: actor.UserID,
 		Status:      model.StatusEnabled,
 	}
@@ -153,7 +173,11 @@ func (s *Service) ResetSecret(ctx context.Context, actor Actor, id string) (*Res
 	if err != nil {
 		return nil, err
 	}
-	record.SecretHash = secret
+	storedSecret, err := s.codec.EncryptString(secret)
+	if err != nil {
+		return nil, err
+	}
+	record.SecretHash = storedSecret
 	if err := s.store.Update(ctx, record); err != nil {
 		return nil, err
 	}

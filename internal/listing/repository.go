@@ -49,6 +49,30 @@ func (s *GormStore) ListWhitelists(ctx context.Context, serviceID string) ([]mod
 	return items, nil
 }
 
+func (s *GormStore) FindBlacklistByID(ctx context.Context, id string) (*model.Blacklist, error) {
+	var item model.Blacklist
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *GormStore) FindWhitelistByID(ctx context.Context, id string) (*model.Whitelist, error) {
+	var item model.Whitelist
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (s *GormStore) DeleteBlacklist(ctx context.Context, id string) error {
 	return s.db.WithContext(ctx).Delete(&model.Blacklist{}, "id = ?", id).Error
 }

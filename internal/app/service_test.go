@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/secret"
 )
 
 func TestCreateReturnsSecretOnce(t *testing.T) {
 	store := &fakeStore{}
-	service := NewService(store)
+	codec := mustCodec(t)
+	service := NewService(store, WithSecretCodec(codec))
 
 	result, err := service.Create(t.Context(), Actor{UserID: "user-001"}, CreateInput{Name: "demo app"})
 	if err != nil {
@@ -22,8 +24,15 @@ func TestCreateReturnsSecretOnce(t *testing.T) {
 	if result.AppSecret == "" || len(result.AppSecret) != 16 {
 		t.Fatalf("app secret = %q", result.AppSecret)
 	}
-	if store.created == nil || store.created.SecretHash != result.AppSecret {
+	if store.created == nil || store.created.SecretHash == result.AppSecret {
 		t.Fatalf("created = %#v", store.created)
+	}
+	decrypted, err := codec.DecryptString(store.created.SecretHash)
+	if err != nil {
+		t.Fatalf("DecryptString() error = %v", err)
+	}
+	if decrypted != result.AppSecret {
+		t.Fatalf("stored secret decrypts to %q, want %q", decrypted, result.AppSecret)
 	}
 }
 
@@ -64,7 +73,8 @@ func TestNormalUserCannotAccessOtherApp(t *testing.T) {
 
 func TestResetSecretReturnsNewSecret(t *testing.T) {
 	store := &fakeStore{app: &model.App{BaseModel: model.BaseModel{ID: "app-001"}, OwnerUserID: "user-001", SecretHash: "old-secret"}}
-	service := NewService(store)
+	codec := mustCodec(t)
+	service := NewService(store, WithSecretCodec(codec))
 
 	result, err := service.ResetSecret(t.Context(), Actor{UserID: "user-001"}, "app-001")
 	if err != nil {
@@ -73,9 +83,25 @@ func TestResetSecretReturnsNewSecret(t *testing.T) {
 	if result.AppSecret == "" || result.AppSecret == "old-secret" {
 		t.Fatalf("app secret = %q", result.AppSecret)
 	}
-	if store.updated == nil || store.updated.SecretHash != result.AppSecret {
+	if store.updated == nil || store.updated.SecretHash == result.AppSecret {
 		t.Fatalf("updated = %#v", store.updated)
 	}
+	decrypted, err := codec.DecryptString(store.updated.SecretHash)
+	if err != nil {
+		t.Fatalf("DecryptString() error = %v", err)
+	}
+	if decrypted != result.AppSecret {
+		t.Fatalf("stored secret decrypts to %q, want %q", decrypted, result.AppSecret)
+	}
+}
+
+func mustCodec(t *testing.T) secret.Codec {
+	t.Helper()
+	codec, err := secret.NewAESGCMCodec([]byte("test-key-material"), "app-secret")
+	if err != nil {
+		t.Fatalf("NewAESGCMCodec() error = %v", err)
+	}
+	return codec
 }
 
 type fakeStore struct {

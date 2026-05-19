@@ -19,6 +19,7 @@ type UserService interface {
 	Update(ctx context.Context, actor usersvc.Actor, input usersvc.UpdateInput) (*model.User, error)
 	UpdateStatus(ctx context.Context, actor usersvc.Actor, input usersvc.UpdateStatusInput) (*model.User, error)
 	UpdatePassword(ctx context.Context, actor usersvc.Actor, input usersvc.UpdatePasswordInput) error
+	Unlock(ctx context.Context, actor usersvc.Actor, input usersvc.UnlockInput) error
 	Delete(ctx context.Context, actor usersvc.Actor, id string) error
 }
 
@@ -80,6 +81,7 @@ func (h *UserHandler) RegisterRoutes(group *gin.RouterGroup) {
 	users.DELETE("/:id", h.Delete)
 	users.PUT("/:id/status", h.UpdateStatus)
 	users.PUT("/:id/password", h.UpdatePassword)
+	users.POST("/:id/unlock", h.Unlock)
 }
 
 func (h *UserPublicHandler) Register(c *gin.Context) {
@@ -171,6 +173,16 @@ func (h *UserHandler) UpdatePassword(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"updated": true})
+}
+
+func (h *UserHandler) Unlock(c *gin.Context) {
+	if err := h.service.Unlock(c.Request.Context(), userActorFromContext(c), usersvc.UnlockInput{
+		ID: c.Param("id"),
+	}); err != nil {
+		writeUserError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"unlocked": true})
 }
 
 func (h *UserHandler) Delete(c *gin.Context) {

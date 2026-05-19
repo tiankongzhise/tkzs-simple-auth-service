@@ -99,6 +99,12 @@ X-Access-Token: <NEW_ACCESS_TOKEN>
 | `health:read` | 健康检测日志查询 |
 | `statistics:read` | 限流统计查询 |
 
+### 1.5 Redis 降级与敏感凭据存储
+
+Redis 短时不可用时，用户登录会跳过密码缓存直接读取 PostgreSQL；Access Token 校验、Refresh Token 刷新和登出会以 PostgreSQL 中的 `auth_tokens` 元数据为兜底。限流仍会切换到本地令牌桶降级。
+
+APP Secret 只在创建和重置时返回明文，数据库中保存 AES-GCM 密文；服务端在 M2M 验签时解密后参与 HMAC 计算。历史明文 APP Secret 可继续兼容，重置后会改为加密密文。OIDC Client Secret 使用 bcrypt 哈希存储。
+
 ## 2. 鉴权流程
 
 ### 2.1 登录
@@ -185,6 +191,27 @@ curl -sS -X POST "https://auth-limit.baichengedu.com/api/auth/logout" \
   "message": "ok",
   "data": {
     "loggedOut": true
+  }
+}
+```
+
+### 2.5 管理员解锁账号
+
+连续登录失败达到阈值后，账号会临时锁定。拥有 `user:manage` 权限或 `admin` 角色的管理员可以手动清理锁定状态和失败计数：
+
+```bash
+curl -sS -X POST "https://auth-limit.baichengedu.com/api/users/<USER_ID>/unlock" \
+  -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>"
+```
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "unlocked": true
   }
 }
 ```
@@ -296,7 +323,7 @@ curl -sS -X POST "https://auth-limit.baichengedu.com/api/apps" \
 }
 ```
 
-`appSecret` 只在创建和重置时返回一次，请立即写入安全的密钥管理系统。
+`appSecret` 只在创建和重置时返回一次，请立即写入安全的密钥管理系统。服务端数据库保存的是加密密文，不会通过列表、详情、日志或管理后台再次返回 Secret 明文。
 
 ### 4.2 重置 APP Secret
 
@@ -716,6 +743,8 @@ curl -sS -X DELETE "https://auth-limit.baichengedu.com/api/whitelists/<WHITELIST
   -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>"
 ```
 
+删除黑名单或白名单时，系统会同步清理对应 Redis 缓存；删除成功后新的限流校验不会继续命中已删除名单。
+
 ## 9. APISIX 对接
 
 本系统可作为 APISIX 的统一身份、OIDC、限流和服务发现控制面。以下配置是可复制模板，实际字段请结合 APISIX 版本参考官方文档：
@@ -956,6 +985,7 @@ curl -sS "https://auth-limit.baichengedu.com/api/limit-statistics?serviceId=<SER
 | 现象 | 排查建议 |
 | --- | --- |
 | 登录返回 401 | 检查用户名密码、用户状态是否启用、是否被临时锁定 |
+| 登录返回 423 | 账号已被失败登录临时锁定，可等待锁定到期或由管理员调用 `/api/users/{id}/unlock` |
 | 管理接口返回 401 | 检查 `Authorization: Bearer <ACCESS_TOKEN>` 是否存在，Token 是否过期或被登出吊销 |
 | 管理接口返回 403 | 检查用户角色是否包含对应权限点；角色变更后需重新登录或刷新 Token |
 | 创建服务后发现列表为空 | 服务需要审核通过，并且健康检测成功后 `healthStatus=healthy` 才会出现在发现列表 |

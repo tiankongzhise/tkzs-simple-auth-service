@@ -23,13 +23,14 @@ import (
 
 func TestAuthHandlerLoginSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	audit := &fakeAuthAuditRecorder{}
 	handler := NewAuthHandler(&fakeAuthService{result: &auth.LoginResult{
 		TokenType:             "Bearer",
 		AccessToken:           "access-token",
 		AccessTokenExpiresAt:  time.Date(2026, 5, 18, 12, 30, 0, 0, time.UTC),
 		RefreshToken:          "refresh-token",
 		RefreshTokenExpiresAt: time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC),
-	}}, nil)
+	}}, nil).WithAudit(audit)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -48,6 +49,9 @@ func TestAuthHandlerLoginSuccess(t *testing.T) {
 	}
 	if body.Code != response.CodeOK {
 		t.Fatalf("body = %#v", body)
+	}
+	if audit.log.Event != "login" || audit.log.Result != "success" {
+		t.Fatalf("audit log = %#v", audit.log)
 	}
 }
 
@@ -175,11 +179,12 @@ func TestAuthHandlerLogoutSuccess(t *testing.T) {
 
 func TestAuthHandlerM2MSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	audit := &fakeAuthAuditRecorder{}
 	handler := NewAuthHandler(&fakeAuthService{}, &fakeM2MService{result: &m2m.VerifyResult{
 		Allowed: true,
 		AppID:   "app00001",
 		AppName: "demo app",
-	}})
+	}}).WithAudit(audit)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -194,6 +199,9 @@ func TestAuthHandlerM2MSuccess(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if audit.log.Event != "m2m" || audit.log.Result != "success" || audit.log.SubjectID != "app00001" {
+		t.Fatalf("audit log = %#v", audit.log)
 	}
 }
 

@@ -11,14 +11,14 @@
 - PostgreSQL 自动迁移，启动时初始化系统权限、管理员角色和默认 admin 用户。
 - Web 登录、Access Token、Refresh Token、刷新轮换、登出吊销、Token 校验。
 - Access Token 临近过期自动续签，续签 Token 通过响应头返回。
-- M2M APP 创建、Secret 重置、HMAC-SHA256 签名校验、时间戳校验和重放拒绝。
+- M2M APP 创建、Secret 加密存储、Secret 重置、HMAC-SHA256 签名校验、时间戳校验和重放拒绝。
 - OIDC/OAuth2 基础端点：discovery、authorize、token、jwks、userinfo。
 - APP 管理、服务注册/审核/发现、黑名单、白名单管理接口。
-- `/ui/` 内嵌轻量管理后台，登录后可查看用户、APP、角色、OIDC Client、服务、日志、统计和健康检测数据。
+- `/ui/` 内嵌轻量管理后台，登录后可查看用户、APP、角色、OIDC Client、服务、日志、统计和健康检测数据，并支持管理员手动解锁账号。
 - 用户注册、用户管理、角色权限管理、OIDC Client 管理接口。
 - 日志查询、健康检测日志查询、限流统计查询和 Prometheus `/metrics` 指标。
 - 服务周期性健康检测任务，状态变化后同步服务发现列表。
-- Redis 分布式令牌桶限流，Redis 异常时本地令牌桶降级。
+- Redis 分布式令牌桶限流，Redis 异常时限流本地令牌桶降级，用户登录、Token 校验、刷新和登出可通过 PostgreSQL 元数据兜底。
 - 动态限流规则 CRUD，服务级启用规则运行时生效，未配置时继承全局默认令牌桶配置。
 - Redis Key 统一 `serviceCode` 前缀隔离，SafeRedisClient 会拦截跨前缀访问。
 - RBAC 中间件和权限点初始化，管理接口按权限保护。
@@ -142,6 +142,7 @@ OIDC/OAuth2 接口：
 | GET/PUT/DELETE | `/api/users/:id` | 用户详情、资料更新、删除 |
 | PUT | `/api/users/:id/status` | 启用或禁用用户 |
 | PUT | `/api/users/:id/password` | 修改用户密码 |
+| POST | `/api/users/:id/unlock` | 管理员手动清理登录失败锁定 |
 | PUT | `/api/users/:id/roles` | 分配用户角色 |
 | GET | `/api/permissions` | 权限列表 |
 | GET/POST | `/api/roles` | 角色列表、创建 |
@@ -263,7 +264,13 @@ authlimit:limit:bucket:{serviceId}:{dimension}:{value}
 authlimit:m2m:nonce:{appId}:{timestamp}:{signHash}
 ```
 
-业务代码禁止直接访问无 `serviceCode` 前缀的 Key。Lua 脚本和批量命令必须校验所有传入 Key。
+业务代码禁止直接访问无 `serviceCode` 前缀的 Key。Lua 脚本和批量命令必须校验所有传入 Key。黑白名单删除时会同步删除对应 Redis 缓存，避免已删除名单继续命中。
+
+## Secret 存储与降级行为
+
+- APP Secret 只在创建和重置时返回明文；数据库中保存 AES-GCM 加密后的密文，M2M 验签时由服务端解密后计算 HMAC。历史明文 APP Secret 记录仍可兼容验签，重置后会改为加密存储。
+- OIDC Client Secret 使用 bcrypt 哈希存储，只在创建和重置时返回明文。
+- Redis 不可用时，登录不会依赖密码缓存，Token 可用性通过 PostgreSQL `auth_tokens` 兜底；刷新和登出会先更新数据库元数据，Redis 恢复后新请求会重新写入必要状态。
 
 ## 已验证的线上功能
 

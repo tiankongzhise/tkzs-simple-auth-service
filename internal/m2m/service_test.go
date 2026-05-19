@@ -8,6 +8,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/secret"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 )
 
@@ -40,6 +41,31 @@ func TestVerifySuccessAndReplayRejected(t *testing.T) {
 	})
 	if !errors.Is(err, ErrReplayRequest) {
 		t.Fatalf("Verify() replay error = %v", err)
+	}
+}
+
+func TestSecretCodecDecryptsEncryptedStoredSecret(t *testing.T) {
+	codec, err := secret.NewAESGCMCodec([]byte("test-key-material"), "app-secret")
+	if err != nil {
+		t.Fatalf("NewAESGCMCodec() error = %v", err)
+	}
+	stored, err := codec.EncryptString("secret")
+	if err != nil {
+		t.Fatalf("EncryptString() error = %v", err)
+	}
+	plain, err := codec.DecryptString(stored)
+	if err != nil {
+		t.Fatalf("DecryptString() error = %v", err)
+	}
+	if plain != "secret" || stored == plain {
+		t.Fatalf("stored=%q plain=%q", stored, plain)
+	}
+	legacy, err := codec.DecryptString("legacy-secret")
+	if err != nil {
+		t.Fatalf("DecryptString(legacy) error = %v", err)
+	}
+	if legacy != "legacy-secret" {
+		t.Fatalf("legacy = %q", legacy)
 	}
 }
 

@@ -81,6 +81,10 @@ type UpdatePasswordInput struct {
 	NewPassword string
 }
 
+type UnlockInput struct {
+	ID string
+}
+
 func NewService(cfg *config.Config, store Store, options ...Option) *Service {
 	service := &Service{cfg: cfg, store: store}
 	for _, option := range options {
@@ -236,6 +240,16 @@ func (s *Service) Delete(ctx context.Context, actor Actor, id string) error {
 	return s.store.Delete(ctx, id)
 }
 
+func (s *Service) Unlock(ctx context.Context, actor Actor, input UnlockInput) error {
+	if !actor.CanManage || actor.UserID == "" || strings.TrimSpace(input.ID) == "" {
+		return ErrForbidden
+	}
+	if _, err := s.store.FindByID(ctx, input.ID); err != nil {
+		return err
+	}
+	return s.clearAuthLock(ctx, input.ID)
+}
+
 func (s *Service) invalidatePasswordCache(ctx context.Context, userID string) error {
 	if s.cache == nil {
 		return nil
@@ -245,6 +259,21 @@ func (s *Service) invalidatePasswordCache(ctx context.Context, userID string) er
 		return err
 	}
 	return s.cache.Del(ctx, key)
+}
+
+func (s *Service) clearAuthLock(ctx context.Context, userID string) error {
+	if s.cache == nil {
+		return nil
+	}
+	failKey, err := s.cache.KeyBuilder().Build("auth", "fail", "user", userID)
+	if err != nil {
+		return err
+	}
+	lockKey, err := s.cache.KeyBuilder().Build("auth", "lock", "user", userID)
+	if err != nil {
+		return err
+	}
+	return s.cache.Del(ctx, failKey, lockKey)
 }
 
 func canAccess(actor Actor, record *model.User) bool {

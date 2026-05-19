@@ -20,6 +20,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/oidc"
 	oidcclientsvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/oidcclient"
 	rolesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/role"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/secret"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/server"
 	servicesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/service"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/statistics"
@@ -67,9 +68,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("load jwt keys: %v", err)
 	}
+	appSecretCodec, err := secret.NewAESGCMCodecFromFile(cfg.JWT.PrivateKeyPath, cfg.Service.Code+":app-secret")
+	if err != nil {
+		log.Fatalf("init app secret codec: %v", err)
+	}
 
 	authService := auth.NewService(cfg, auth.NewGormStore(db), safeRedis, jwtManager)
-	m2mService := m2m.NewService(cfg, m2m.NewGormStore(db), safeRedis)
+	m2mService := m2m.NewService(cfg, m2m.NewGormStore(db, appSecretCodec), safeRedis)
 	auditService := audit.NewService(audit.NewGormStore(db))
 	authHandler := api.NewAuthHandler(authService, m2mService).WithAudit(auditService)
 	oidcService := oidc.NewService(
@@ -80,7 +85,7 @@ func main() {
 		oidc.WithCache(safeRedis),
 	)
 	oidcHandler := api.NewOIDCHandler(oidcService)
-	appService := appsvc.NewService(appsvc.NewGormStore(db))
+	appService := appsvc.NewService(appsvc.NewGormStore(db), appsvc.WithSecretCodec(appSecretCodec))
 	appHandler := api.NewAppHandler(appService)
 	serviceService := servicesvc.NewService(cfg, servicesvc.NewGormStore(db), safeRedis)
 	serviceHandler := api.NewServiceHandler(serviceService)

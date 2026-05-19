@@ -118,6 +118,30 @@ func TestUpdatePasswordRequiresOldPasswordForSelfAndClearsCache(t *testing.T) {
 	}
 }
 
+func TestUnlockClearsAuthFailureAndLockKeys(t *testing.T) {
+	cache := newFakeUserCache(t)
+	store := &fakeStore{user: &model.User{BaseModel: model.BaseModel{ID: "user-002"}}}
+	service := NewService(config.Default(), store, WithCache(cache))
+
+	if err := service.Unlock(t.Context(), Actor{UserID: "admin", CanManage: true}, UnlockInput{ID: "user-002"}); err != nil {
+		t.Fatalf("Unlock() error = %v", err)
+	}
+	if len(cache.deletedKeys) != 2 ||
+		cache.deletedKeys[0] != "authlimit:auth:fail:user:user-002" ||
+		cache.deletedKeys[1] != "authlimit:auth:lock:user:user-002" {
+		t.Fatalf("deleted keys = %#v", cache.deletedKeys)
+	}
+}
+
+func TestUnlockRequiresManagePermission(t *testing.T) {
+	service := NewService(config.Default(), &fakeStore{user: &model.User{BaseModel: model.BaseModel{ID: "user-002"}}})
+
+	err := service.Unlock(t.Context(), Actor{UserID: "user-001"}, UnlockInput{ID: "user-002"})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Unlock() error = %v", err)
+	}
+}
+
 func TestDeleteRejectsSelfDeletion(t *testing.T) {
 	service := NewService(config.Default(), &fakeStore{user: &model.User{BaseModel: model.BaseModel{ID: "admin"}}})
 
@@ -174,8 +198,9 @@ func (s *fakeStore) Delete(_ context.Context, id string) error {
 }
 
 type fakeUserCache struct {
-	keys    *redisx.KeyBuilder
-	deleted string
+	keys        *redisx.KeyBuilder
+	deleted     string
+	deletedKeys []string
 }
 
 func newFakeUserCache(t *testing.T) *fakeUserCache {
@@ -195,5 +220,6 @@ func (c *fakeUserCache) Del(_ context.Context, keys ...string) error {
 	if len(keys) > 0 {
 		c.deleted = keys[0]
 	}
+	c.deletedKeys = append(c.deletedKeys, keys...)
 	return nil
 }

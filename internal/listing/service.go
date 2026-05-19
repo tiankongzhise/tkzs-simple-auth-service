@@ -31,6 +31,8 @@ type Store interface {
 	CreateWhitelist(ctx context.Context, entry *model.Whitelist) error
 	ListBlacklists(ctx context.Context, serviceID string) ([]model.Blacklist, error)
 	ListWhitelists(ctx context.Context, serviceID string) ([]model.Whitelist, error)
+	FindBlacklistByID(ctx context.Context, id string) (*model.Blacklist, error)
+	FindWhitelistByID(ctx context.Context, id string) (*model.Whitelist, error)
 	DeleteBlacklist(ctx context.Context, id string) error
 	DeleteWhitelist(ctx context.Context, id string) error
 	FindBlacklistHit(ctx context.Context, serviceID string, typ string, key string, now time.Time) (*model.Blacklist, error)
@@ -149,14 +151,28 @@ func (s *Service) DeleteBlacklist(ctx context.Context, actor Actor, id string) e
 	if !actor.IsAdmin {
 		return ErrForbidden
 	}
-	return s.store.DeleteBlacklist(ctx, id)
+	entry, err := s.store.FindBlacklistByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.store.DeleteBlacklist(ctx, id); err != nil {
+		return err
+	}
+	return s.evictEntry(ctx, ListBlacklist, entry.ServiceID, entry.Type, entry.Key)
 }
 
 func (s *Service) DeleteWhitelist(ctx context.Context, actor Actor, id string) error {
 	if !actor.IsAdmin {
 		return ErrForbidden
 	}
-	return s.store.DeleteWhitelist(ctx, id)
+	entry, err := s.store.FindWhitelistByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.store.DeleteWhitelist(ctx, id); err != nil {
+		return err
+	}
+	return s.evictEntry(ctx, ListWhitelist, entry.ServiceID, entry.Type, entry.Key)
 }
 
 func (s *Service) Check(ctx context.Context, input HitInput) (*HitResult, error) {
@@ -234,6 +250,20 @@ func (s *Service) cacheHit(ctx context.Context, listType string, serviceID strin
 		return false, ErrUnavailable
 	}
 	return exists, nil
+}
+
+func (s *Service) evictEntry(ctx context.Context, listType string, serviceID string, typ string, key string) error {
+	if s.cache == nil {
+		return nil
+	}
+	redisKey, err := s.cache.KeyBuilder().Build(listType, typ, serviceID, key)
+	if err != nil {
+		return err
+	}
+	if err := s.cache.Del(ctx, redisKey); err != nil {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 func validInput(input CreateInput, allowToken bool) bool {

@@ -80,6 +80,7 @@ const views = {
       action("启用", "ghost", (item) => updateUserStatus(item, "enabled"), (item) => item.status !== "enabled"),
       action("禁用", "ghost", (item) => updateUserStatus(item, "disabled"), (item) => item.status === "enabled"),
       action("密码", "ghost", (item) => openPassword(item)),
+      action("解锁", "ghost", unlockUser),
       action("角色", "ghost", (item) => openRoleAssign("user", item)),
       action("删除", "danger", (item) => removeItem(`/api/users/${item.id}`))
     ]
@@ -695,6 +696,12 @@ function formPayload(form, fields) {
 async function updateUserStatus(item, status) {
   await api(`/api/users/${item.id}/status`, { method: "PUT", body: { status } });
   showAlert("用户状态已更新");
+  await safeLoadView();
+}
+
+async function unlockUser(item) {
+  await api(`/api/users/${item.id}/unlock`, { method: "POST", body: {} });
+  showAlert("账号锁定已清理");
   await safeLoadView();
 }
 

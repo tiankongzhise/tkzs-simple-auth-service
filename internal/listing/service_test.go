@@ -83,6 +83,44 @@ func TestCreateTemporaryBlacklistRequiresExpiryAndCaches(t *testing.T) {
 	}
 }
 
+func TestDeleteBlacklistEvictsCachedEntry(t *testing.T) {
+	cache := newFakeCache(t)
+	cache.values["authlimit:blacklist:ip:svc-001:127.0.0.1"] = "1"
+	store := &fakeStore{blacklist: &model.Blacklist{
+		BaseModel: model.BaseModel{ID: "black-001"},
+		ServiceID: "svc-001",
+		Type:      TypeIP,
+		Key:       "127.0.0.1",
+	}}
+	service := NewService(store, cache)
+
+	if err := service.DeleteBlacklist(t.Context(), Actor{UserID: "admin", IsAdmin: true}, "black-001"); err != nil {
+		t.Fatalf("DeleteBlacklist() error = %v", err)
+	}
+	if _, ok := cache.values["authlimit:blacklist:ip:svc-001:127.0.0.1"]; ok {
+		t.Fatalf("blacklist cache was not deleted: %#v", cache.values)
+	}
+}
+
+func TestDeleteWhitelistEvictsCachedEntry(t *testing.T) {
+	cache := newFakeCache(t)
+	cache.values["authlimit:whitelist:app:svc-001:app00001"] = "1"
+	store := &fakeStore{whitelist: &model.Whitelist{
+		BaseModel: model.BaseModel{ID: "white-001"},
+		ServiceID: "svc-001",
+		Type:      TypeApp,
+		Key:       "app00001",
+	}}
+	service := NewService(store, cache)
+
+	if err := service.DeleteWhitelist(t.Context(), Actor{UserID: "admin", IsAdmin: true}, "white-001"); err != nil {
+		t.Fatalf("DeleteWhitelist() error = %v", err)
+	}
+	if _, ok := cache.values["authlimit:whitelist:app:svc-001:app00001"]; ok {
+		t.Fatalf("whitelist cache was not deleted: %#v", cache.values)
+	}
+}
+
 type fakeStore struct {
 	blacklist  *model.Blacklist
 	whitelist  *model.Whitelist
@@ -106,6 +144,20 @@ func (s *fakeStore) ListBlacklists(_ context.Context, _ string) ([]model.Blackli
 
 func (s *fakeStore) ListWhitelists(_ context.Context, _ string) ([]model.Whitelist, error) {
 	return s.whitelists, nil
+}
+
+func (s *fakeStore) FindBlacklistByID(_ context.Context, id string) (*model.Blacklist, error) {
+	if s.blacklist != nil && s.blacklist.ID == id {
+		return s.blacklist, nil
+	}
+	return nil, ErrNotFound
+}
+
+func (s *fakeStore) FindWhitelistByID(_ context.Context, id string) (*model.Whitelist, error) {
+	if s.whitelist != nil && s.whitelist.ID == id {
+		return s.whitelist, nil
+	}
+	return nil, ErrNotFound
 }
 
 func (s *fakeStore) DeleteBlacklist(_ context.Context, _ string) error {
