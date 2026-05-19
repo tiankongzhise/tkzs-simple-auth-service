@@ -11,6 +11,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/metrics"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 )
 
@@ -58,6 +59,7 @@ type Service struct {
 	cfg      *config.Config
 	cache    Cache
 	lists    ListChecker
+	rules    RuleProvider
 	recorder Recorder
 	now      func() time.Time
 	fallback *localLimiter
@@ -69,6 +71,10 @@ type ListChecker interface {
 
 type Recorder interface {
 	RecordLimit(ctx context.Context, serviceID string, dimension string, key string, allowed bool, remaining int, resetAt int64) error
+}
+
+type RuleProvider interface {
+	ListEnabledRules(ctx context.Context, serviceID string) ([]model.RateLimitRule, error)
 }
 
 type VerifyInput struct {
@@ -94,6 +100,12 @@ func WithListChecker(lists ListChecker) Option {
 	}
 }
 
+func WithRuleProvider(rules RuleProvider) Option {
+	return func(s *Service) {
+		s.rules = rules
+	}
+}
+
 func WithRecorder(recorder Recorder) Option {
 	return func(s *Service) {
 		s.recorder = recorder
@@ -105,7 +117,7 @@ func NewService(cfg *config.Config, cache Cache, options ...Option) *Service {
 		cfg:      cfg,
 		cache:    cache,
 		now:      time.Now,
-		fallback: newLocalLimiter(cfg.Limit.LocalFallbackCapacity, cfg.Limit.LocalFallbackRatePerSecond),
+		fallback: newLocalLimiter(),
 	}
 	for _, option := range options {
 		option(service)
@@ -138,21 +150,24 @@ func (s *Service) Verify(ctx context.Context, input VerifyInput) (*VerifyResult,
 			return nil, ErrBlacklisted
 		}
 	}
-	dimensions := s.dimensions(input)
-	if len(dimensions) == 0 {
+	checks, err := s.ruleChecks(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if len(checks) == 0 {
 		return &VerifyResult{
 			Allowed:   true,
 			Remaining: s.cfg.Limit.DefaultCapacity,
 			ResetAt:   s.now().Unix(),
 		}, nil
 	}
-	results := make([]VerifyResult, 0, len(dimensions))
-	for dimension, value := range dimensions {
-		result, err := s.checkDimension(ctx, input.ServiceID, dimension, value)
+	results := make([]VerifyResult, 0, len(checks))
+	for _, check := range checks {
+		result, err := s.checkDimension(ctx, input.ServiceID, check)
 		if err != nil {
-			result = s.fallback.allow(input.ServiceID+":"+dimension+":"+value, s.now())
+			result = s.fallback.allow(input.ServiceID+":"+check.Granularity+":"+check.Dimension+":"+check.Value, check.FallbackCapacity, check.FallbackRatePerSecond, s.now())
 		}
-		s.record(ctx, input.ServiceID, dimension, value, result)
+		s.record(ctx, input.ServiceID, check.Dimension, check.Value, result)
 		results = append(results, *result)
 		if !result.Allowed {
 			return result, nil
@@ -172,19 +187,19 @@ func (s *Service) record(ctx context.Context, serviceID string, dimension string
 	_ = s.recorder.RecordLimit(ctx, serviceID, dimension, value, result.Allowed, result.Remaining, result.ResetAt)
 }
 
-func (s *Service) checkDimension(ctx context.Context, serviceID string, dimension string, value string) (*VerifyResult, error) {
-	key, err := s.cache.KeyBuilder().Build("limit", "bucket", serviceID, dimension, value)
+func (s *Service) checkDimension(ctx context.Context, serviceID string, check ruleCheck) (*VerifyResult, error) {
+	key, err := s.cache.KeyBuilder().Build("limit", "bucket", serviceID, check.Granularity, check.Dimension, check.Value)
 	if err != nil {
 		return nil, err
 	}
 	nowMillis := s.now().UnixMilli()
-	ttl := ttlSeconds(s.cfg.Limit.DefaultCapacity, s.cfg.Limit.DefaultRatePerSecond)
+	ttl := ttlSeconds(check.Capacity, check.RatePerSecond)
 	raw, err := s.cache.Eval(
 		ctx,
 		tokenBucketScript,
 		[]string{key},
-		strconv.Itoa(s.cfg.Limit.DefaultCapacity),
-		strconv.Itoa(s.cfg.Limit.DefaultRatePerSecond),
+		strconv.Itoa(check.Capacity),
+		strconv.Itoa(check.RatePerSecond),
 		strconv.FormatInt(nowMillis, 10),
 		"1",
 		strconv.Itoa(ttl),
@@ -193,6 +208,74 @@ func (s *Service) checkDimension(ctx context.Context, serviceID string, dimensio
 		return nil, err
 	}
 	return parseLuaResult(raw)
+}
+
+type ruleCheck struct {
+	Dimension             string
+	Granularity           string
+	Value                 string
+	Capacity              int
+	RatePerSecond         int
+	FallbackCapacity      int
+	FallbackRatePerSecond int
+	BlacklistHits         int
+	BlockSeconds          int
+}
+
+func (s *Service) ruleChecks(ctx context.Context, input VerifyInput) ([]ruleCheck, error) {
+	values := s.dimensions(input)
+	if len(values) == 0 {
+		return nil, nil
+	}
+	if s.rules == nil {
+		return s.defaultRuleChecks(values), nil
+	}
+	rules, err := s.rules.ListEnabledRules(ctx, input.ServiceID)
+	if err != nil {
+		return nil, err
+	}
+	checks := make([]ruleCheck, 0, len(rules))
+	for _, rule := range rules {
+		value := values[rule.Dimension]
+		if value == "" {
+			continue
+		}
+		checks = append(checks, ruleCheck{
+			Dimension:             rule.Dimension,
+			Granularity:           rule.Granularity,
+			Value:                 value,
+			Capacity:              rule.Capacity,
+			RatePerSecond:         rule.RatePerSecond,
+			FallbackCapacity:      rule.Capacity,
+			FallbackRatePerSecond: rule.RatePerSecond,
+			BlacklistHits:         rule.BlacklistHits,
+			BlockSeconds:          rule.BlockSeconds,
+		})
+	}
+	if len(checks) > 0 {
+		return checks, nil
+	}
+	return s.defaultRuleChecks(values), nil
+}
+
+func (s *Service) defaultRuleChecks(values map[string]string) []ruleCheck {
+	checks := make([]ruleCheck, 0, len(values))
+	for _, dimension := range s.cfg.Limit.Dimensions {
+		value := values[dimension]
+		if value == "" {
+			continue
+		}
+		checks = append(checks, ruleCheck{
+			Dimension:             dimension,
+			Granularity:           "second",
+			Value:                 value,
+			Capacity:              s.cfg.Limit.DefaultCapacity,
+			RatePerSecond:         s.cfg.Limit.DefaultRatePerSecond,
+			FallbackCapacity:      s.cfg.Limit.LocalFallbackCapacity,
+			FallbackRatePerSecond: s.cfg.Limit.LocalFallbackRatePerSecond,
+		})
+	}
+	return checks
 }
 
 func (s *Service) dimensions(input VerifyInput) map[string]string {
@@ -279,10 +362,8 @@ func ttlSeconds(capacity int, rate int) int {
 }
 
 type localLimiter struct {
-	mu       sync.Mutex
-	capacity int
-	rate     int
-	buckets  map[string]*localBucket
+	mu      sync.Mutex
+	buckets map[string]*localBucket
 }
 
 type localBucket struct {
@@ -290,21 +371,27 @@ type localBucket struct {
 	updated time.Time
 }
 
-func newLocalLimiter(capacity int, rate int) *localLimiter {
-	return &localLimiter{capacity: capacity, rate: rate, buckets: map[string]*localBucket{}}
+func newLocalLimiter() *localLimiter {
+	return &localLimiter{buckets: map[string]*localBucket{}}
 }
 
-func (l *localLimiter) allow(key string, now time.Time) *VerifyResult {
+func (l *localLimiter) allow(key string, capacity int, rate int, now time.Time) *VerifyResult {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if capacity <= 0 {
+		capacity = 1
+	}
+	if rate <= 0 {
+		rate = 1
+	}
 	bucket := l.buckets[key]
 	if bucket == nil {
-		bucket = &localBucket{tokens: float64(l.capacity), updated: now}
+		bucket = &localBucket{tokens: float64(capacity), updated: now}
 		l.buckets[key] = bucket
 	}
 	elapsed := now.Sub(bucket.updated).Seconds()
 	if elapsed > 0 {
-		bucket.tokens = minFloat(float64(l.capacity), bucket.tokens+elapsed*float64(l.rate))
+		bucket.tokens = minFloat(float64(capacity), bucket.tokens+elapsed*float64(rate))
 		bucket.updated = now
 	}
 	allowed := false
@@ -314,7 +401,7 @@ func (l *localLimiter) allow(key string, now time.Time) *VerifyResult {
 	}
 	resetAt := now.Unix()
 	if !allowed {
-		resetAt = now.Add(time.Duration((1-bucket.tokens)/float64(l.rate)) * time.Second).Unix()
+		resetAt = now.Add(time.Duration((1-bucket.tokens)/float64(rate)) * time.Second).Unix()
 	}
 	return &VerifyResult{Allowed: allowed, Remaining: int(bucket.tokens), ResetAt: resetAt}
 }

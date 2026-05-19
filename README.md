@@ -19,6 +19,7 @@
 - 日志查询、健康检测日志查询、限流统计查询和 Prometheus `/metrics` 指标。
 - 服务周期性健康检测任务，状态变化后同步服务发现列表。
 - Redis 分布式令牌桶限流，Redis 异常时本地令牌桶降级。
+- 动态限流规则 CRUD，服务级启用规则运行时生效，未配置时继承全局默认令牌桶配置。
 - Redis Key 统一 `serviceCode` 前缀隔离，SafeRedisClient 会拦截跨前缀访问。
 - RBAC 中间件和权限点初始化，管理接口按权限保护。
 - Linux amd64 宝塔部署包构建，单个静态 Go 二进制运行。
@@ -26,7 +27,6 @@
 当前限制：
 
 - `/ui/` 是轻量单页后台，聚焦核心数据查看和入口操作，不是完整前端框架。
-- 限流规则仍使用当前默认令牌桶配置，本轮未扩展动态限流规则 CRUD。
 - 操作日志、鉴权日志表已可查询，业务侧精细审计埋点可继续按事件类型补充。
 
 ## 环境要求
@@ -152,6 +152,8 @@ OIDC/OAuth2 接口：
 | GET | `/api/services/discover` | 服务发现 |
 | GET/PUT/DELETE | `/api/services/:id` | 服务详情、更新、删除 |
 | POST | `/api/services/:id/approve` | 服务审核 |
+| GET/POST | `/api/limit-rules` | 限流规则列表、创建 |
+| GET/PUT/DELETE | `/api/limit-rules/:id` | 限流规则详情、更新、删除 |
 | GET/POST | `/api/blacklists` | 黑名单列表、创建 |
 | DELETE | `/api/blacklists/:id` | 删除黑名单 |
 | GET/POST | `/api/whitelists` | 白名单列表、创建 |

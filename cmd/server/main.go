@@ -14,6 +14,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/database"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/healthcheck"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/limiter"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/limitrule"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/oidc"
@@ -91,7 +92,15 @@ func main() {
 	listService := listing.NewService(listing.NewGormStore(db), safeRedis)
 	listHandler := api.NewListHandler(listService)
 	statisticsService := statistics.NewService(statistics.NewGormStore(db))
-	limitService := limiter.NewService(cfg, safeRedis, limiter.WithListChecker(listService), limiter.WithRecorder(statisticsService))
+	limitRuleService := limitrule.NewService(limitrule.NewGormStore(db))
+	limitRuleHandler := api.NewLimitRuleHandler(limitRuleService)
+	limitService := limiter.NewService(
+		cfg,
+		safeRedis,
+		limiter.WithListChecker(listService),
+		limiter.WithRuleProvider(limitRuleService),
+		limiter.WithRecorder(statisticsService),
+	)
 	limitHandler := api.NewLimitHandler(limitService)
 	userService := usersvc.NewService(cfg, usersvc.NewGormStore(db), usersvc.WithCache(safeRedis))
 	userPublicHandler := api.NewUserPublicHandler(userService)
@@ -124,6 +133,7 @@ func main() {
 		server.WithAPIRoutes(statisticsHandler, api.AuthMiddleware(authService), api.RequirePermission("statistics:read")),
 		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),
+		server.WithAPIRoutes(limitRuleHandler, api.AuthMiddleware(authService), api.RequirePermission("limit:manage")),
 		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage")),
 	)
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)

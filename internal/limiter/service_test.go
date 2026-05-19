@@ -8,6 +8,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 )
 
@@ -28,11 +29,70 @@ func TestVerifyUsesRedisTokenBucket(t *testing.T) {
 	if !result.Allowed || result.Remaining != 9 {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(cache.keysPassed) != 1 || cache.keysPassed[0] != "authlimit:limit:bucket:svc-001:ip:127.0.0.1" {
+	if len(cache.keysPassed) != 1 || cache.keysPassed[0] != "authlimit:limit:bucket:svc-001:second:ip:127.0.0.1" {
 		t.Fatalf("keys = %#v", cache.keysPassed)
 	}
 	if recorder.serviceID != "svc-001" || recorder.dimension != "ip" || recorder.key != "127.0.0.1" {
 		t.Fatalf("recorder = %#v", recorder)
+	}
+}
+
+func TestVerifyUsesDynamicRulesWhenConfigured(t *testing.T) {
+	cfg := config.Default()
+	cfg.Limit.DefaultCapacity = 100
+	cache := newFakeCache(t)
+	cache.result = []any{int64(1), int64(1), int64(1779091200000)}
+	service := NewService(cfg, cache, WithRuleProvider(&fakeRuleProvider{rules: []model.RateLimitRule{
+		{
+			Dimension:     "ip",
+			Granularity:   "minute",
+			Capacity:      2,
+			RatePerSecond: 1,
+			Enabled:       true,
+		},
+	}}))
+	service.SetNow(func() time.Time { return time.Unix(1779091200, 0) })
+
+	result, err := service.Verify(t.Context(), VerifyInput{ServiceID: "svc-001", IP: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if result.Remaining != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(cache.keysPassed) != 1 || cache.keysPassed[0] != "authlimit:limit:bucket:svc-001:minute:ip:127.0.0.1" {
+		t.Fatalf("keys = %#v", cache.keysPassed)
+	}
+	if cache.argsPassed[0] != "2" {
+		t.Fatalf("args = %#v", cache.argsPassed)
+	}
+}
+
+func TestVerifyFallsBackToDefaultRulesWhenNoDynamicRuleMatches(t *testing.T) {
+	cfg := config.Default()
+	cfg.Limit.Dimensions = []string{"ip"}
+	cache := newFakeCache(t)
+	cache.result = []any{int64(1), int64(99), int64(1779091200000)}
+	service := NewService(cfg, cache, WithRuleProvider(&fakeRuleProvider{rules: []model.RateLimitRule{
+		{
+			Dimension:     "path",
+			Granularity:   "minute",
+			Capacity:      2,
+			RatePerSecond: 1,
+			Enabled:       true,
+		},
+	}}))
+	service.SetNow(func() time.Time { return time.Unix(1779091200, 0) })
+
+	result, err := service.Verify(t.Context(), VerifyInput{ServiceID: "svc-001", IP: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if result.Remaining != 99 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(cache.keysPassed) != 1 || cache.keysPassed[0] != "authlimit:limit:bucket:svc-001:second:ip:127.0.0.1" {
+		t.Fatalf("keys = %#v", cache.keysPassed)
 	}
 }
 
@@ -115,6 +175,7 @@ type fakeCache struct {
 	results    [][]any
 	err        error
 	keysPassed []string
+	argsPassed []string
 }
 
 func newFakeCache(t *testing.T) *fakeCache {
@@ -130,17 +191,27 @@ func (c *fakeCache) KeyBuilder() *redisx.KeyBuilder {
 	return c.keys
 }
 
-func (c *fakeCache) Eval(_ context.Context, _ string, keys []string, _ ...string) (any, error) {
+func (c *fakeCache) Eval(_ context.Context, _ string, keys []string, args ...string) (any, error) {
 	if c.err != nil {
 		return nil, c.err
 	}
 	c.keysPassed = append(c.keysPassed, keys...)
+	c.argsPassed = append(c.argsPassed, args...)
 	if len(c.results) > 0 {
 		result := c.results[0]
 		c.results = c.results[1:]
 		return result, nil
 	}
 	return c.result, nil
+}
+
+type fakeRuleProvider struct {
+	rules []model.RateLimitRule
+	err   error
+}
+
+func (p *fakeRuleProvider) ListEnabledRules(_ context.Context, _ string) ([]model.RateLimitRule, error) {
+	return p.rules, p.err
 }
 
 type fakeListChecker struct {
