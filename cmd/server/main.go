@@ -16,6 +16,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/oidc"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/server"
 	servicesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/service"
+	usersvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/user"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/jwtx"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 )
@@ -78,12 +79,17 @@ func main() {
 	listHandler := api.NewListHandler(listService)
 	limitService := limiter.NewService(cfg, safeRedis, limiter.WithListChecker(listService))
 	limitHandler := api.NewLimitHandler(limitService)
+	userService := usersvc.NewService(cfg, usersvc.NewGormStore(db))
+	userPublicHandler := api.NewUserPublicHandler(userService)
+	userHandler := api.NewUserHandler(userService)
 
 	router := server.NewRouter(
 		cfg,
 		server.WithAuthRoutes(authHandler),
 		server.WithOIDCRoutes(oidcHandler),
 		server.WithLimitRoutes(limitHandler),
+		server.WithAPIRoutes(userPublicHandler),
+		server.WithAPIRoutes(userHandler, api.AuthMiddleware(authService)),
 		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),
 		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage")),
