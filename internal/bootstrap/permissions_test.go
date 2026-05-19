@@ -20,6 +20,9 @@ func TestSystemPermissionsAreUnique(t *testing.T) {
 		}
 		seen[permission.Code] = true
 	}
+	if !seen["oidc:manage"] {
+		t.Fatal("oidc:manage permission seed missing")
+	}
 }
 
 func TestAdminRoleSeed(t *testing.T) {

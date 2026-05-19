@@ -14,6 +14,7 @@ func SystemPermissions() []PermissionSeed {
 		{Code: "user:manage", Name: "用户管理", Module: "user", Action: "manage"},
 		{Code: "app:manage", Name: "APP 管理", Module: "app", Action: "manage"},
 		{Code: "role:manage", Name: "角色权限管理", Module: "role", Action: "manage"},
+		{Code: "oidc:manage", Name: "OIDC Client 管理", Module: "oidc", Action: "manage"},
 		{Code: "service:manage", Name: "服务管理", Module: "service", Action: "manage"},
 		{Code: "limit:manage", Name: "限流规则管理", Module: "limit", Action: "manage"},
 		{Code: "blacklist:manage", Name: "黑名单管理", Module: "blacklist", Action: "manage"},
