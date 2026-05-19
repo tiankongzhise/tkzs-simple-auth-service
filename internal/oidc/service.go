@@ -16,6 +16,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -355,10 +356,17 @@ func (s *Service) validClient(ctx context.Context, clientID string, redirectURI 
 	if client.Status != model.StatusEnabled || client.RedirectURI != redirectURI {
 		return nil, ErrInvalidClient
 	}
-	if client.ClientSecret != "" && client.ClientSecret != clientSecret {
+	if client.ClientSecret != "" && !secretMatches(client.ClientSecret, clientSecret) {
 		return nil, ErrInvalidClient
 	}
 	return client, nil
+}
+
+func secretMatches(stored string, provided string) bool {
+	if stored == provided {
+		return true
+	}
+	return bcrypt.CompareHashAndPassword([]byte(stored), []byte(provided)) == nil
 }
 
 func (s *Service) ensureCodeDeps() error {

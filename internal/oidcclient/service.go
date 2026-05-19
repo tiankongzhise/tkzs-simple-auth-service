@@ -26,6 +26,8 @@ type Store interface {
 	Create(ctx context.Context, client *model.OIDCClient) error
 	List(ctx context.Context, filter ListFilter) ([]model.OIDCClient, error)
 	FindByID(ctx context.Context, id string) (*model.OIDCClient, error)
+	Update(ctx context.Context, client *model.OIDCClient) error
+	Delete(ctx context.Context, id string) error
 }
 
 type Service struct {
@@ -45,6 +47,13 @@ type ListFilter struct {
 type CreateInput struct {
 	Name        string
 	RedirectURI string
+}
+
+type UpdateInput struct {
+	ID          string
+	Name        string
+	RedirectURI string
+	Status      string
 }
 
 type Result struct {
@@ -109,6 +118,73 @@ func (s *Service) Get(ctx context.Context, actor Actor, id string) (*model.OIDCC
 		return nil, ErrForbidden
 	}
 	return record, nil
+}
+
+func (s *Service) Update(ctx context.Context, actor Actor, input UpdateInput) (*model.OIDCClient, error) {
+	if actor.UserID == "" || strings.TrimSpace(input.ID) == "" || !validName(input.Name) ||
+		!validRedirectURI(input.RedirectURI) {
+		return nil, ErrInvalidInput
+	}
+	status := strings.TrimSpace(input.Status)
+	if status != "" && status != model.StatusEnabled && status != model.StatusDisabled {
+		return nil, ErrInvalidInput
+	}
+	record, err := s.store.FindByID(ctx, input.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !canAccess(actor, record) {
+		return nil, ErrForbidden
+	}
+	record.Name = strings.TrimSpace(input.Name)
+	record.RedirectURI = strings.TrimSpace(input.RedirectURI)
+	if status != "" {
+		record.Status = status
+	}
+	if err := s.store.Update(ctx, record); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func (s *Service) Delete(ctx context.Context, actor Actor, id string) error {
+	if actor.UserID == "" || strings.TrimSpace(id) == "" {
+		return ErrInvalidInput
+	}
+	record, err := s.store.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !canAccess(actor, record) {
+		return ErrForbidden
+	}
+	return s.store.Delete(ctx, id)
+}
+
+func (s *Service) ResetSecret(ctx context.Context, actor Actor, id string) (*Result, error) {
+	if actor.UserID == "" || strings.TrimSpace(id) == "" {
+		return nil, ErrInvalidInput
+	}
+	record, err := s.store.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !canAccess(actor, record) {
+		return nil, ErrForbidden
+	}
+	secret, err := randomSecret(32)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(secret), s.cfg.Security.PasswordBcryptCost)
+	if err != nil {
+		return nil, err
+	}
+	record.ClientSecret = string(hash)
+	if err := s.store.Update(ctx, record); err != nil {
+		return nil, err
+	}
+	return &Result{Client: *record, ClientSecret: secret}, nil
 }
 
 func (s *Service) uniqueClientID(ctx context.Context) (string, error) {

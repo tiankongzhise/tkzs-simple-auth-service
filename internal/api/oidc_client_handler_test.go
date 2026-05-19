@@ -79,6 +79,54 @@ func TestOIDCClientHandlerForbidden(t *testing.T) {
 	}
 }
 
+func TestOIDCClientHandlerUpdate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewOIDCClientHandler(&fakeOIDCClientService{client: &model.OIDCClient{
+		BaseModel:   model.BaseModel{ID: "client-001"},
+		ClientID:    "client0000000001",
+		Name:        "web client",
+		RedirectURI: "http://app.local/callback",
+		OwnerUserID: "user-001",
+		Status:      model.StatusEnabled,
+	}})
+	router := testOIDCClientRouter(handler)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/oidc-clients/client-001", strings.NewReader(`{"name":"web client","redirectUri":"http://app.local/callback","status":"enabled"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOIDCClientHandlerResetSecret(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewOIDCClientHandler(&fakeOIDCClientService{result: &oidcclientsvc.Result{
+		Client: model.OIDCClient{
+			BaseModel:   model.BaseModel{ID: "client-001"},
+			ClientID:    "client0000000001",
+			Name:        "web client",
+			OwnerUserID: "user-001",
+			Status:      model.StatusEnabled,
+		},
+		ClientSecret: "new-secret",
+	}})
+	router := testOIDCClientRouter(handler)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/oidc-clients/client-001/reset-secret", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "new-secret") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func testOIDCClientRouter(handler *OIDCClientHandler) *gin.Engine {
 	router := gin.New()
 	group := router.Group("/api")
@@ -108,4 +156,16 @@ func (s *fakeOIDCClientService) List(_ context.Context, _ oidcclientsvc.Actor) (
 
 func (s *fakeOIDCClientService) Get(_ context.Context, _ oidcclientsvc.Actor, _ string) (*model.OIDCClient, error) {
 	return s.client, s.err
+}
+
+func (s *fakeOIDCClientService) Update(_ context.Context, _ oidcclientsvc.Actor, _ oidcclientsvc.UpdateInput) (*model.OIDCClient, error) {
+	return s.client, s.err
+}
+
+func (s *fakeOIDCClientService) Delete(_ context.Context, _ oidcclientsvc.Actor, _ string) error {
+	return s.err
+}
+
+func (s *fakeOIDCClientService) ResetSecret(_ context.Context, _ oidcclientsvc.Actor, _ string) (*oidcclientsvc.Result, error) {
+	return s.result, s.err
 }

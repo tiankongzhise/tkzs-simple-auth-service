@@ -60,10 +60,68 @@ func TestGetRejectsOtherOwnerForNormalUser(t *testing.T) {
 	}
 }
 
+func TestUpdateChangesMetadata(t *testing.T) {
+	store := &fakeStore{client: &model.OIDCClient{
+		BaseModel:   model.BaseModel{ID: "client-001"},
+		Name:        "old",
+		RedirectURI: "http://app.local/old",
+		OwnerUserID: "user-001",
+		Status:      model.StatusEnabled,
+	}}
+	service := NewService(config.Default(), store)
+
+	result, err := service.Update(t.Context(), Actor{UserID: "user-001"}, UpdateInput{
+		ID:          "client-001",
+		Name:        "new",
+		RedirectURI: "http://app.local/new",
+		Status:      model.StatusDisabled,
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if result.Name != "new" || result.Status != model.StatusDisabled || store.updated == nil {
+		t.Fatalf("result = %#v updated=%#v", result, store.updated)
+	}
+}
+
+func TestResetSecretReplacesStoredHash(t *testing.T) {
+	store := &fakeStore{client: &model.OIDCClient{
+		BaseModel:    model.BaseModel{ID: "client-001"},
+		ClientSecret: "old-secret",
+		OwnerUserID:  "user-001",
+	}}
+	service := NewService(config.Default(), store)
+
+	result, err := service.ResetSecret(t.Context(), Actor{UserID: "user-001"}, "client-001")
+	if err != nil {
+		t.Fatalf("ResetSecret() error = %v", err)
+	}
+	if result.ClientSecret == "" || result.Client.ClientSecret == "old-secret" {
+		t.Fatalf("result = %#v", result)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(result.Client.ClientSecret), []byte(result.ClientSecret)) != nil {
+		t.Fatal("stored reset secret is not a bcrypt hash")
+	}
+}
+
+func TestDeleteRejectsOtherOwnerForNormalUser(t *testing.T) {
+	service := NewService(config.Default(), &fakeStore{client: &model.OIDCClient{
+		BaseModel:   model.BaseModel{ID: "client-002"},
+		OwnerUserID: "user-002",
+	}})
+
+	err := service.Delete(t.Context(), Actor{UserID: "user-001"}, "client-002")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Delete() error = %v", err)
+	}
+}
+
 type fakeStore struct {
 	clientIDExists bool
 	client         *model.OIDCClient
 	clients        []model.OIDCClient
+	updated        *model.OIDCClient
+	deleted        string
 }
 
 func (s *fakeStore) ClientIDExists(_ context.Context, _ string) (bool, error) {
@@ -91,4 +149,15 @@ func (s *fakeStore) FindByID(_ context.Context, id string) (*model.OIDCClient, e
 		return nil, ErrNotFound
 	}
 	return s.client, nil
+}
+
+func (s *fakeStore) Update(_ context.Context, client *model.OIDCClient) error {
+	s.updated = client
+	s.client = client
+	return nil
+}
+
+func (s *fakeStore) Delete(_ context.Context, id string) error {
+	s.deleted = id
+	return nil
 }

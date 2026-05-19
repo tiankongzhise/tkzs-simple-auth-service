@@ -9,6 +9,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestDiscoveryReturnsOIDCEndpoints(t *testing.T) {
@@ -176,6 +177,53 @@ func TestAuthorizationCodeExchangeIssuesTokenAndDeletesCode(t *testing.T) {
 	}
 	if cache.values["authlimit:oidc:code:code-001"] != "" {
 		t.Fatalf("auth code was not deleted: %#v", cache.values)
+	}
+}
+
+func TestAuthorizationCodeExchangeAcceptsBcryptClientSecret(t *testing.T) {
+	now := time.Date(2026, 5, 19, 9, 0, 0, 0, time.UTC)
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword() error = %v", err)
+	}
+	store := &fakeStore{
+		client: &Client{
+			ClientID:     "client-001",
+			ClientSecret: string(hash),
+			RedirectURI:  "http://app/callback",
+			Status:       "enabled",
+		},
+		code: &AuthCode{
+			Code:        "code-001",
+			ClientID:    "client-001",
+			UserID:      "user-001",
+			RedirectURI: "http://app/callback",
+			ExpiresAt:   now.Add(time.Minute),
+		},
+	}
+	cache := newFakeOIDCCache(t)
+	cache.values["authlimit:oidc:code:code-001"] = "user-001"
+	service := NewService(
+		config.Default(),
+		mustKeyProvider(t),
+		&fakeTokenService{token: &TokenResult{AccessToken: "access-token"}},
+		WithStore(store),
+		WithCache(cache),
+		WithNow(func() time.Time { return now }),
+	)
+
+	result, err := service.Token(t.Context(), TokenInput{
+		GrantType:    "authorization_code",
+		Code:         "code-001",
+		ClientID:     "client-001",
+		ClientSecret: "secret",
+		RedirectURI:  "http://app/callback",
+	})
+	if err != nil {
+		t.Fatalf("Token() error = %v", err)
+	}
+	if result.AccessToken != "access-token" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 

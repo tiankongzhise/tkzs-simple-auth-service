@@ -16,6 +16,9 @@ type OIDCClientService interface {
 	Create(ctx context.Context, actor oidcclientsvc.Actor, input oidcclientsvc.CreateInput) (*oidcclientsvc.Result, error)
 	List(ctx context.Context, actor oidcclientsvc.Actor) ([]model.OIDCClient, error)
 	Get(ctx context.Context, actor oidcclientsvc.Actor, id string) (*model.OIDCClient, error)
+	Update(ctx context.Context, actor oidcclientsvc.Actor, input oidcclientsvc.UpdateInput) (*model.OIDCClient, error)
+	Delete(ctx context.Context, actor oidcclientsvc.Actor, id string) error
+	ResetSecret(ctx context.Context, actor oidcclientsvc.Actor, id string) (*oidcclientsvc.Result, error)
 }
 
 type OIDCClientHandler struct {
@@ -25,6 +28,12 @@ type OIDCClientHandler struct {
 type oidcClientCreateRequest struct {
 	Name        string `json:"name" binding:"required"`
 	RedirectURI string `json:"redirectUri" binding:"required"`
+}
+
+type oidcClientUpdateRequest struct {
+	Name        string `json:"name" binding:"required"`
+	RedirectURI string `json:"redirectUri" binding:"required"`
+	Status      string `json:"status"`
 }
 
 type oidcClientResponse struct {
@@ -48,6 +57,9 @@ func (h *OIDCClientHandler) RegisterRoutes(group *gin.RouterGroup) {
 	clients.POST("", h.Create)
 	clients.GET("", h.List)
 	clients.GET("/:id", h.Get)
+	clients.PUT("/:id", h.Update)
+	clients.DELETE("/:id", h.Delete)
+	clients.POST("/:id/reset-secret", h.ResetSecret)
 }
 
 func (h *OIDCClientHandler) Create(c *gin.Context) {
@@ -87,6 +99,42 @@ func (h *OIDCClientHandler) Get(c *gin.Context) {
 		return
 	}
 	response.OK(c, oidcClientModelResponse(*result, ""))
+}
+
+func (h *OIDCClientHandler) Update(c *gin.Context) {
+	var req oidcClientUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	result, err := h.service.Update(c.Request.Context(), oidcClientActorFromContext(c), oidcclientsvc.UpdateInput{
+		ID:          c.Param("id"),
+		Name:        req.Name,
+		RedirectURI: req.RedirectURI,
+		Status:      req.Status,
+	})
+	if err != nil {
+		writeOIDCClientError(c, err)
+		return
+	}
+	response.OK(c, oidcClientModelResponse(*result, ""))
+}
+
+func (h *OIDCClientHandler) Delete(c *gin.Context) {
+	if err := h.service.Delete(c.Request.Context(), oidcClientActorFromContext(c), c.Param("id")); err != nil {
+		writeOIDCClientError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"deleted": true})
+}
+
+func (h *OIDCClientHandler) ResetSecret(c *gin.Context) {
+	result, err := h.service.ResetSecret(c.Request.Context(), oidcClientActorFromContext(c), c.Param("id"))
+	if err != nil {
+		writeOIDCClientError(c, err)
+		return
+	}
+	response.OK(c, oidcClientResultResponse(result))
 }
 
 func oidcClientActorFromContext(c *gin.Context) oidcclientsvc.Actor {
