@@ -1,6 +1,11 @@
 package model
 
-import "testing"
+import (
+	"sync"
+	"testing"
+
+	"gorm.io/gorm/schema"
+)
 
 func TestAllModelsIncludesCoreTables(t *testing.T) {
 	models := AllModels()
@@ -36,5 +41,31 @@ func TestBaseModelBeforeCreateSetsID(t *testing.T) {
 	}
 	if model.ID == "" {
 		t.Fatal("id is empty")
+	}
+}
+
+func TestAuthTokenAppRelationUsesAppRecordID(t *testing.T) {
+	parsed, err := schema.Parse(&AuthToken{}, &sync.Map{}, schema.NamingStrategy{})
+	if err != nil {
+		t.Fatalf("parse AuthToken schema: %v", err)
+	}
+
+	relation, ok := parsed.Relationships.Relations["App"]
+	if !ok {
+		t.Fatal("AuthToken.App relation not found")
+	}
+	if relation.Type != schema.BelongsTo {
+		t.Fatalf("AuthToken.App relation type = %s, want %s", relation.Type, schema.BelongsTo)
+	}
+	if len(relation.References) != 1 {
+		t.Fatalf("AuthToken.App references = %d, want 1", len(relation.References))
+	}
+	reference := relation.References[0]
+	if reference.PrimaryKey == nil || reference.PrimaryKey.Schema.Name != "App" || reference.PrimaryKey.DBName != "id" {
+		t.Fatalf("AuthToken.App primary key = %#v, want App.id", reference.PrimaryKey)
+	}
+	if reference.ForeignKey == nil || reference.ForeignKey.Schema.Name != "AuthToken" ||
+		reference.ForeignKey.Name != "AppRecordID" || reference.ForeignKey.DBName != "app_id" {
+		t.Fatalf("AuthToken.App foreign key = %#v, want AuthToken.AppRecordID/app_id", reference.ForeignKey)
 	}
 }

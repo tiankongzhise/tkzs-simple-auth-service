@@ -61,15 +61,15 @@ func (Permission) TableName() string {
 
 type AuthToken struct {
 	BaseModel
-	UserID    string     `gorm:"type:char(36);not null;index" json:"userId"`
-	User      User       `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	AppID     *string    `gorm:"type:char(36);index" json:"appId,omitempty"`
-	App       *App       `gorm:"foreignKey:AppID" json:"app,omitempty"`
-	JTI       string     `gorm:"size:64;not null;uniqueIndex" json:"jti"`
-	TokenType string     `gorm:"size:20;not null;index" json:"tokenType"`
-	Status    string     `gorm:"size:20;not null;default:active;index" json:"status"`
-	ExpiresAt time.Time  `gorm:"not null;index" json:"expiresAt"`
-	RevokedAt *time.Time `json:"revokedAt,omitempty"`
+	UserID      string     `gorm:"type:char(36);not null;index" json:"userId"`
+	User        User       `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	AppRecordID *string    `gorm:"column:app_id;type:char(36);index" json:"appRecordId,omitempty"`
+	App         *App       `gorm:"foreignKey:AppRecordID;references:ID" json:"app,omitempty"`
+	JTI         string     `gorm:"size:64;not null;uniqueIndex" json:"jti"`
+	TokenType   string     `gorm:"size:20;not null;index" json:"tokenType"`
+	Status      string     `gorm:"size:20;not null;default:active;index" json:"status"`
+	ExpiresAt   time.Time  `gorm:"not null;index" json:"expiresAt"`
+	RevokedAt   *time.Time `json:"revokedAt,omitempty"`
 }
 
 func (AuthToken) TableName() string {
