@@ -71,6 +71,10 @@ func (m *Manager) SetNow(now func() time.Time) {
 	m.now = now
 }
 
+func (m *Manager) PublicKey() *rsa.PublicKey {
+	return m.publicKey
+}
+
 func (m *Manager) IssuePair(subject Subject) (*TokenPair, error) {
 	access, err := m.Issue(subject, TokenTypeAccess)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/bootstrap"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/database"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/oidc"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/server"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/jwtx"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
@@ -57,8 +58,10 @@ func main() {
 	authService := auth.NewService(cfg, auth.NewGormStore(db), safeRedis, jwtManager)
 	m2mService := m2m.NewService(cfg, m2m.NewGormStore(db), safeRedis)
 	authHandler := api.NewAuthHandler(authService, m2mService)
+	oidcService := oidc.NewService(cfg, jwtManager)
+	oidcHandler := api.NewOIDCHandler(oidcService)
 
-	router := server.NewRouter(cfg, server.WithAuthRoutes(authHandler))
+	router := server.NewRouter(cfg, server.WithAuthRoutes(authHandler), server.WithOIDCRoutes(oidcHandler))
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := router.Run(addr); err != nil {
 		log.Fatalf("run server: %v", err)
