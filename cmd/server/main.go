@@ -58,7 +58,13 @@ func main() {
 	authService := auth.NewService(cfg, auth.NewGormStore(db), safeRedis, jwtManager)
 	m2mService := m2m.NewService(cfg, m2m.NewGormStore(db), safeRedis)
 	authHandler := api.NewAuthHandler(authService, m2mService)
-	oidcService := oidc.NewService(cfg, jwtManager, oidc.NewAuthTokenService(authService))
+	oidcService := oidc.NewService(
+		cfg,
+		jwtManager,
+		oidc.NewAuthTokenService(authService),
+		oidc.WithStore(oidc.NewGormStore(db)),
+		oidc.WithCache(safeRedis),
+	)
 	oidcHandler := api.NewOIDCHandler(oidcService)
 
 	router := server.NewRouter(cfg, server.WithAuthRoutes(authHandler), server.WithOIDCRoutes(oidcHandler))

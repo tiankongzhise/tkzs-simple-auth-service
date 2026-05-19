@@ -25,6 +25,7 @@ func TestAllModelsIncludesCoreTables(t *testing.T) {
 	for _, name := range []string{
 		"users", "apps", "roles", "permissions", "auth_tokens",
 		"services", "rate_limit_rules", "blacklists", "whitelists",
+		"oidc_clients", "oidc_auth_codes",
 		"operation_logs", "auth_logs", "limit_logs", "health_check_logs",
 		"limit_statistics",
 	} {

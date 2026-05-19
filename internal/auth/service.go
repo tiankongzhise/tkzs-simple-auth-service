@@ -234,6 +234,31 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*LoginResul
 	}, nil
 }
 
+func (s *Service) IssueForUser(ctx context.Context, userID string) (*LoginResult, error) {
+	user, err := s.store.FindUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrInvalidToken
+		}
+		return nil, err
+	}
+	if user.Status != model.StatusEnabled {
+		return nil, ErrInvalidToken
+	}
+	pair, err := s.jwt.IssuePair(jwtx.Subject{
+		ID:          user.ID,
+		Roles:       roleCodes(user.Roles),
+		Permissions: permissionCodes(user.Roles),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.saveAndCachePair(ctx, user.ID, pair); err != nil {
+		return nil, err
+	}
+	return loginResultFromPair(pair), nil
+}
+
 func (s *Service) Verify(ctx context.Context, accessToken string) (*VerifyResult, error) {
 	claims, err := s.jwt.Parse(accessToken, model.TokenTypeAccess)
 	if err != nil {

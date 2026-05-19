@@ -9,6 +9,7 @@ import (
 )
 
 type AuthService interface {
+	IssueForUser(ctx context.Context, userID string) (*auth.LoginResult, error)
 	Refresh(ctx context.Context, refreshToken string) (*auth.LoginResult, error)
 	Verify(ctx context.Context, accessToken string) (*auth.VerifyResult, error)
 }
@@ -22,19 +23,20 @@ func NewAuthTokenService(authService AuthService) *AuthTokenService {
 	return &AuthTokenService{auth: authService, now: time.Now}
 }
 
+func (s *AuthTokenService) IssueForUser(ctx context.Context, userID string) (*TokenResult, error) {
+	result, err := s.auth.IssueForUser(ctx, userID)
+	if err != nil {
+		return nil, mapAuthError(err)
+	}
+	return tokenResultFromLogin(s.now(), result), nil
+}
+
 func (s *AuthTokenService) Refresh(ctx context.Context, refreshToken string) (*TokenResult, error) {
 	result, err := s.auth.Refresh(ctx, refreshToken)
 	if err != nil {
 		return nil, mapAuthError(err)
 	}
-	now := s.now()
-	return &TokenResult{
-		TokenType:             result.TokenType,
-		AccessToken:           result.AccessToken,
-		ExpiresIn:             secondsUntil(now, result.AccessTokenExpiresAt),
-		RefreshToken:          result.RefreshToken,
-		RefreshTokenExpiresIn: secondsUntil(now, result.RefreshTokenExpiresAt),
-	}, nil
+	return tokenResultFromLogin(s.now(), result), nil
 }
 
 func (s *AuthTokenService) Verify(ctx context.Context, accessToken string) (*VerifyResult, error) {
@@ -67,4 +69,14 @@ func secondsUntil(now time.Time, expiresAt time.Time) int64 {
 		return 0
 	}
 	return seconds
+}
+
+func tokenResultFromLogin(now time.Time, result *auth.LoginResult) *TokenResult {
+	return &TokenResult{
+		TokenType:             result.TokenType,
+		AccessToken:           result.AccessToken,
+		ExpiresIn:             secondsUntil(now, result.AccessTokenExpiresAt),
+		RefreshToken:          result.RefreshToken,
+		RefreshTokenExpiresIn: secondsUntil(now, result.RefreshTokenExpiresAt),
+	}
 }
