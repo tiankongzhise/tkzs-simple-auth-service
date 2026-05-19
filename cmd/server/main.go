@@ -7,6 +7,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/api"
 	appsvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/app"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/audit"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/auth"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/bootstrap"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/database"
@@ -90,6 +91,8 @@ func main() {
 	roleAssignmentHandler := api.NewRoleAssignmentHandler(roleService)
 	oidcClientService := oidcclientsvc.NewService(cfg, oidcclientsvc.NewGormStore(db))
 	oidcClientHandler := api.NewOIDCClientHandler(oidcClientService)
+	auditService := audit.NewService(audit.NewGormStore(db))
+	logHandler := api.NewLogHandler(auditService)
 
 	router := server.NewRouter(
 		cfg,
@@ -102,6 +105,7 @@ func main() {
 		server.WithAPIRoutes(roleHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
 		server.WithAPIRoutes(roleAssignmentHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
 		server.WithAPIRoutes(oidcClientHandler, api.AuthMiddleware(authService), api.RequirePermission("oidc:manage")),
+		server.WithAPIRoutes(logHandler, api.AuthMiddleware(authService), api.RequirePermission("log:read")),
 		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),
 		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage")),
