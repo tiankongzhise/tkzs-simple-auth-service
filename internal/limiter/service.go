@@ -57,12 +57,17 @@ type Service struct {
 	cfg      *config.Config
 	cache    Cache
 	lists    ListChecker
+	recorder Recorder
 	now      func() time.Time
 	fallback *localLimiter
 }
 
 type ListChecker interface {
 	Check(ctx context.Context, input listing.HitInput) (*listing.HitResult, error)
+}
+
+type Recorder interface {
+	RecordLimit(ctx context.Context, serviceID string, dimension string, key string, allowed bool, remaining int, resetAt int64) error
 }
 
 type VerifyInput struct {
@@ -85,6 +90,12 @@ type Option func(*Service)
 func WithListChecker(lists ListChecker) Option {
 	return func(s *Service) {
 		s.lists = lists
+	}
+}
+
+func WithRecorder(recorder Recorder) Option {
+	return func(s *Service) {
+		s.recorder = recorder
 	}
 }
 
@@ -140,12 +151,20 @@ func (s *Service) Verify(ctx context.Context, input VerifyInput) (*VerifyResult,
 		if err != nil {
 			result = s.fallback.allow(input.ServiceID+":"+dimension+":"+value, s.now())
 		}
+		s.record(ctx, input.ServiceID, dimension, value, result)
 		results = append(results, *result)
 		if !result.Allowed {
 			return result, nil
 		}
 	}
 	return strictest(results), nil
+}
+
+func (s *Service) record(ctx context.Context, serviceID string, dimension string, value string, result *VerifyResult) {
+	if s.recorder == nil || result == nil {
+		return
+	}
+	_ = s.recorder.RecordLimit(ctx, serviceID, dimension, value, result.Allowed, result.Remaining, result.ResetAt)
 }
 
 func (s *Service) checkDimension(ctx context.Context, serviceID string, dimension string, value string) (*VerifyResult, error) {

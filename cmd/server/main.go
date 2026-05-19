@@ -19,6 +19,7 @@ import (
 	rolesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/role"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/server"
 	servicesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/service"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/statistics"
 	usersvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/user"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/jwtx"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
@@ -80,7 +81,8 @@ func main() {
 	serviceHandler := api.NewServiceHandler(serviceService)
 	listService := listing.NewService(listing.NewGormStore(db), safeRedis)
 	listHandler := api.NewListHandler(listService)
-	limitService := limiter.NewService(cfg, safeRedis, limiter.WithListChecker(listService))
+	statisticsService := statistics.NewService(statistics.NewGormStore(db))
+	limitService := limiter.NewService(cfg, safeRedis, limiter.WithListChecker(listService), limiter.WithRecorder(statisticsService))
 	limitHandler := api.NewLimitHandler(limitService)
 	userService := usersvc.NewService(cfg, usersvc.NewGormStore(db), usersvc.WithCache(safeRedis))
 	userPublicHandler := api.NewUserPublicHandler(userService)
@@ -93,6 +95,7 @@ func main() {
 	oidcClientHandler := api.NewOIDCClientHandler(oidcClientService)
 	auditService := audit.NewService(audit.NewGormStore(db))
 	logHandler := api.NewLogHandler(auditService)
+	statisticsHandler := api.NewStatisticsHandler(statisticsService)
 
 	router := server.NewRouter(
 		cfg,
@@ -106,6 +109,7 @@ func main() {
 		server.WithAPIRoutes(roleAssignmentHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
 		server.WithAPIRoutes(oidcClientHandler, api.AuthMiddleware(authService), api.RequirePermission("oidc:manage")),
 		server.WithAPIRoutes(logHandler, api.AuthMiddleware(authService), api.RequirePermission("log:read")),
+		server.WithAPIRoutes(statisticsHandler, api.AuthMiddleware(authService), api.RequirePermission("statistics:read")),
 		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),
 		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage")),

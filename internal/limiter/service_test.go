@@ -14,7 +14,8 @@ import (
 func TestVerifyUsesRedisTokenBucket(t *testing.T) {
 	cache := newFakeCache(t)
 	cache.result = []any{int64(1), int64(9), int64(1779091200000)}
-	service := NewService(config.Default(), cache)
+	recorder := &fakeRecorder{}
+	service := NewService(config.Default(), cache, WithRecorder(recorder))
 	service.SetNow(func() time.Time { return time.Unix(1779091200, 0) })
 
 	result, err := service.Verify(t.Context(), VerifyInput{
@@ -29,6 +30,9 @@ func TestVerifyUsesRedisTokenBucket(t *testing.T) {
 	}
 	if len(cache.keysPassed) != 1 || cache.keysPassed[0] != "authlimit:limit:bucket:svc-001:ip:127.0.0.1" {
 		t.Fatalf("keys = %#v", cache.keysPassed)
+	}
+	if recorder.serviceID != "svc-001" || recorder.dimension != "ip" || recorder.key != "127.0.0.1" {
+		t.Fatalf("recorder = %#v", recorder)
 	}
 }
 
@@ -146,4 +150,23 @@ type fakeListChecker struct {
 
 func (c *fakeListChecker) Check(_ context.Context, _ listing.HitInput) (*listing.HitResult, error) {
 	return c.result, c.err
+}
+
+type fakeRecorder struct {
+	serviceID string
+	dimension string
+	key       string
+	allowed   bool
+	remaining int
+	resetAt   int64
+}
+
+func (r *fakeRecorder) RecordLimit(_ context.Context, serviceID string, dimension string, key string, allowed bool, remaining int, resetAt int64) error {
+	r.serviceID = serviceID
+	r.dimension = dimension
+	r.key = key
+	r.allowed = allowed
+	r.remaining = remaining
+	r.resetAt = resetAt
+	return nil
 }
