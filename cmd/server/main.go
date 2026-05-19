@@ -6,6 +6,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/api"
+	appsvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/app"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/auth"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/bootstrap"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/database"
@@ -66,8 +67,15 @@ func main() {
 		oidc.WithCache(safeRedis),
 	)
 	oidcHandler := api.NewOIDCHandler(oidcService)
+	appService := appsvc.NewService(appsvc.NewGormStore(db))
+	appHandler := api.NewAppHandler(appService)
 
-	router := server.NewRouter(cfg, server.WithAuthRoutes(authHandler), server.WithOIDCRoutes(oidcHandler))
+	router := server.NewRouter(
+		cfg,
+		server.WithAuthRoutes(authHandler),
+		server.WithOIDCRoutes(oidcHandler),
+		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService)),
+	)
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := router.Run(addr); err != nil {
 		log.Fatalf("run server: %v", err)

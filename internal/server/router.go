@@ -22,11 +22,17 @@ type EngineRouteRegistrar interface {
 }
 
 type routerOptions struct {
-	auth RouteRegistrar
-	oidc EngineRouteRegistrar
+	auth      RouteRegistrar
+	oidc      EngineRouteRegistrar
+	apiRoutes []apiRouteRegistration
 }
 
 type Option func(*routerOptions)
+
+type apiRouteRegistration struct {
+	registrar   RouteRegistrar
+	middlewares []gin.HandlerFunc
+}
 
 func WithAuthRoutes(registrar RouteRegistrar) Option {
 	return func(opts *routerOptions) {
@@ -37,6 +43,15 @@ func WithAuthRoutes(registrar RouteRegistrar) Option {
 func WithOIDCRoutes(registrar EngineRouteRegistrar) Option {
 	return func(opts *routerOptions) {
 		opts.oidc = registrar
+	}
+}
+
+func WithAPIRoutes(registrar RouteRegistrar, middlewares ...gin.HandlerFunc) Option {
+	return func(opts *routerOptions) {
+		opts.apiRoutes = append(opts.apiRoutes, apiRouteRegistration{
+			registrar:   registrar,
+			middlewares: middlewares,
+		})
 	}
 }
 
@@ -66,6 +81,13 @@ func NewRouter(cfg *config.Config, options ...Option) *gin.Engine {
 	api := router.Group("/api")
 	if opts.auth != nil {
 		opts.auth.RegisterRoutes(api.Group("/auth"))
+	}
+	for _, route := range opts.apiRoutes {
+		group := api.Group("")
+		if len(route.middlewares) > 0 {
+			group.Use(route.middlewares...)
+		}
+		route.registrar.RegisterRoutes(group)
 	}
 
 	return router
