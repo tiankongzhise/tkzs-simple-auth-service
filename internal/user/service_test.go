@@ -7,6 +7,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -64,10 +65,74 @@ func TestGetRejectsOtherUserForNormalActor(t *testing.T) {
 	}
 }
 
+func TestUpdateAllowsNormalUserToEditSelf(t *testing.T) {
+	store := &fakeStore{user: &model.User{BaseModel: model.BaseModel{ID: "user-001"}, Username: "user_001"}}
+	service := NewService(config.Default(), store)
+
+	result, err := service.Update(t.Context(), Actor{UserID: "user-001"}, UpdateInput{
+		ID:          "user-001",
+		DisplayName: "New Name",
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if result.DisplayName != "New Name" || store.updated == nil {
+		t.Fatalf("result = %#v updated=%#v", result, store.updated)
+	}
+}
+
+func TestUpdateStatusRejectsSelfChange(t *testing.T) {
+	service := NewService(config.Default(), &fakeStore{user: &model.User{BaseModel: model.BaseModel{ID: "admin"}}})
+
+	_, err := service.UpdateStatus(t.Context(), Actor{UserID: "admin", CanManage: true}, UpdateStatusInput{
+		ID:     "admin",
+		Status: model.StatusDisabled,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("UpdateStatus() error = %v", err)
+	}
+}
+
+func TestUpdatePasswordRequiresOldPasswordForSelfAndClearsCache(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("Old_1234"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword() error = %v", err)
+	}
+	cache := newFakeUserCache(t)
+	store := &fakeStore{user: &model.User{
+		BaseModel:    model.BaseModel{ID: "user-001"},
+		PasswordHash: string(hash),
+	}}
+	service := NewService(config.Default(), store, WithCache(cache))
+
+	err = service.UpdatePassword(t.Context(), Actor{UserID: "user-001"}, UpdatePasswordInput{
+		ID:          "user-001",
+		OldPassword: "Old_1234",
+		NewPassword: "New_1234",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePassword() error = %v", err)
+	}
+	if cache.deleted != "authlimit:user:password:user-001" {
+		t.Fatalf("deleted cache key = %q", cache.deleted)
+	}
+}
+
+func TestDeleteRejectsSelfDeletion(t *testing.T) {
+	service := NewService(config.Default(), &fakeStore{user: &model.User{BaseModel: model.BaseModel{ID: "admin"}}})
+
+	err := service.Delete(t.Context(), Actor{UserID: "admin", CanManage: true}, "admin")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Delete() error = %v", err)
+	}
+}
+
 type fakeStore struct {
 	usernameExists bool
 	user           *model.User
 	users          []model.User
+	updated        *model.User
+	deleted        string
 }
 
 func (s *fakeStore) UsernameExists(_ context.Context, _ string) (bool, error) {
@@ -95,4 +160,40 @@ func (s *fakeStore) FindByID(_ context.Context, id string) (*model.User, error) 
 		return nil, ErrNotFound
 	}
 	return s.user, nil
+}
+
+func (s *fakeStore) Update(_ context.Context, user *model.User) error {
+	s.updated = user
+	s.user = user
+	return nil
+}
+
+func (s *fakeStore) Delete(_ context.Context, id string) error {
+	s.deleted = id
+	return nil
+}
+
+type fakeUserCache struct {
+	keys    *redisx.KeyBuilder
+	deleted string
+}
+
+func newFakeUserCache(t *testing.T) *fakeUserCache {
+	t.Helper()
+	keys, err := redisx.NewKeyBuilder("authlimit")
+	if err != nil {
+		t.Fatalf("NewKeyBuilder() error = %v", err)
+	}
+	return &fakeUserCache{keys: keys}
+}
+
+func (c *fakeUserCache) KeyBuilder() *redisx.KeyBuilder {
+	return c.keys
+}
+
+func (c *fakeUserCache) Del(_ context.Context, keys ...string) error {
+	if len(keys) > 0 {
+		c.deleted = keys[0]
+	}
+	return nil
 }

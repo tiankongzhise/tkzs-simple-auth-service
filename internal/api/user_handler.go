@@ -16,6 +16,10 @@ type UserService interface {
 	Register(ctx context.Context, input usersvc.RegisterInput) (*model.User, error)
 	List(ctx context.Context, actor usersvc.Actor) ([]model.User, error)
 	Get(ctx context.Context, actor usersvc.Actor, id string) (*model.User, error)
+	Update(ctx context.Context, actor usersvc.Actor, input usersvc.UpdateInput) (*model.User, error)
+	UpdateStatus(ctx context.Context, actor usersvc.Actor, input usersvc.UpdateStatusInput) (*model.User, error)
+	UpdatePassword(ctx context.Context, actor usersvc.Actor, input usersvc.UpdatePasswordInput) error
+	Delete(ctx context.Context, actor usersvc.Actor, id string) error
 }
 
 type UserPublicHandler struct {
@@ -30,6 +34,19 @@ type userRegisterRequest struct {
 	Username    string `json:"username" binding:"required"`
 	Password    string `json:"password" binding:"required"`
 	DisplayName string `json:"displayName"`
+}
+
+type userUpdateRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
+type userStatusRequest struct {
+	Status string `json:"status" binding:"required"`
+}
+
+type userPasswordRequest struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword" binding:"required"`
 }
 
 type userResponse struct {
@@ -59,6 +76,10 @@ func (h *UserHandler) RegisterRoutes(group *gin.RouterGroup) {
 	users := group.Group("/users")
 	users.GET("", h.List)
 	users.GET("/:id", h.Get)
+	users.PUT("/:id", h.Update)
+	users.DELETE("/:id", h.Delete)
+	users.PUT("/:id/status", h.UpdateStatus)
+	users.PUT("/:id/password", h.UpdatePassword)
 }
 
 func (h *UserPublicHandler) Register(c *gin.Context) {
@@ -99,6 +120,65 @@ func (h *UserHandler) Get(c *gin.Context) {
 		return
 	}
 	response.OK(c, userModelResponse(*result))
+}
+
+func (h *UserHandler) Update(c *gin.Context) {
+	var req userUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	result, err := h.service.Update(c.Request.Context(), userActorFromContext(c), usersvc.UpdateInput{
+		ID:          c.Param("id"),
+		DisplayName: req.DisplayName,
+	})
+	if err != nil {
+		writeUserError(c, err)
+		return
+	}
+	response.OK(c, userModelResponse(*result))
+}
+
+func (h *UserHandler) UpdateStatus(c *gin.Context) {
+	var req userStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	result, err := h.service.UpdateStatus(c.Request.Context(), userActorFromContext(c), usersvc.UpdateStatusInput{
+		ID:     c.Param("id"),
+		Status: req.Status,
+	})
+	if err != nil {
+		writeUserError(c, err)
+		return
+	}
+	response.OK(c, userModelResponse(*result))
+}
+
+func (h *UserHandler) UpdatePassword(c *gin.Context) {
+	var req userPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	if err := h.service.UpdatePassword(c.Request.Context(), userActorFromContext(c), usersvc.UpdatePasswordInput{
+		ID:          c.Param("id"),
+		OldPassword: req.OldPassword,
+		NewPassword: req.NewPassword,
+	}); err != nil {
+		writeUserError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"updated": true})
+}
+
+func (h *UserHandler) Delete(c *gin.Context) {
+	if err := h.service.Delete(c.Request.Context(), userActorFromContext(c), c.Param("id")); err != nil {
+		writeUserError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"deleted": true})
 }
 
 func userActorFromContext(c *gin.Context) usersvc.Actor {

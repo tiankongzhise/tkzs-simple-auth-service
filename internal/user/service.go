@@ -9,6 +9,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -26,11 +27,27 @@ type Store interface {
 	Create(ctx context.Context, user *model.User) error
 	List(ctx context.Context, filter ListFilter) ([]model.User, error)
 	FindByID(ctx context.Context, id string) (*model.User, error)
+	Update(ctx context.Context, user *model.User) error
+	Delete(ctx context.Context, id string) error
+}
+
+type Cache interface {
+	KeyBuilder() *redisx.KeyBuilder
+	Del(ctx context.Context, keys ...string) error
 }
 
 type Service struct {
 	cfg   *config.Config
 	store Store
+	cache Cache
+}
+
+type Option func(*Service)
+
+func WithCache(cache Cache) Option {
+	return func(s *Service) {
+		s.cache = cache
+	}
 }
 
 type Actor struct {
@@ -48,8 +65,28 @@ type RegisterInput struct {
 	DisplayName string
 }
 
-func NewService(cfg *config.Config, store Store) *Service {
-	return &Service{cfg: cfg, store: store}
+type UpdateInput struct {
+	ID          string
+	DisplayName string
+}
+
+type UpdateStatusInput struct {
+	ID     string
+	Status string
+}
+
+type UpdatePasswordInput struct {
+	ID          string
+	OldPassword string
+	NewPassword string
+}
+
+func NewService(cfg *config.Config, store Store, options ...Option) *Service {
+	service := &Service{cfg: cfg, store: store}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *Service) Register(ctx context.Context, input RegisterInput) (*model.User, error) {
@@ -106,6 +143,112 @@ func (s *Service) Get(ctx context.Context, actor Actor, id string) (*model.User,
 		return nil, ErrForbidden
 	}
 	return record, nil
+}
+
+func (s *Service) Update(ctx context.Context, actor Actor, input UpdateInput) (*model.User, error) {
+	if actor.UserID == "" || strings.TrimSpace(input.ID) == "" {
+		return nil, ErrInvalidInput
+	}
+	record, err := s.store.FindByID(ctx, input.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !canAccess(actor, record) {
+		return nil, ErrForbidden
+	}
+	displayName := strings.TrimSpace(input.DisplayName)
+	if len(displayName) > 64 {
+		return nil, ErrInvalidInput
+	}
+	record.DisplayName = displayName
+	if record.DisplayName == "" {
+		record.DisplayName = record.Username
+	}
+	if err := s.store.Update(ctx, record); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func (s *Service) UpdateStatus(ctx context.Context, actor Actor, input UpdateStatusInput) (*model.User, error) {
+	if !actor.CanManage || actor.UserID == "" || strings.TrimSpace(input.ID) == "" {
+		return nil, ErrForbidden
+	}
+	status := strings.TrimSpace(input.Status)
+	if status != model.StatusEnabled && status != model.StatusDisabled {
+		return nil, ErrInvalidInput
+	}
+	record, err := s.store.FindByID(ctx, input.ID)
+	if err != nil {
+		return nil, err
+	}
+	if record.ID == actor.UserID {
+		return nil, ErrForbidden
+	}
+	record.Status = status
+	if err := s.store.Update(ctx, record); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func (s *Service) UpdatePassword(ctx context.Context, actor Actor, input UpdatePasswordInput) error {
+	if actor.UserID == "" || strings.TrimSpace(input.ID) == "" || !validPassword(input.NewPassword) {
+		return ErrInvalidInput
+	}
+	record, err := s.store.FindByID(ctx, input.ID)
+	if err != nil {
+		return err
+	}
+	if !canAccess(actor, record) {
+		return ErrForbidden
+	}
+	if !actor.CanManage {
+		if strings.TrimSpace(input.OldPassword) == "" {
+			return ErrInvalidInput
+		}
+		if bcrypt.CompareHashAndPassword([]byte(record.PasswordHash), []byte(input.OldPassword)) != nil {
+			return ErrInvalidInput
+		}
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), s.cfg.Security.PasswordBcryptCost)
+	if err != nil {
+		return err
+	}
+	record.PasswordHash = string(hash)
+	if err := s.store.Update(ctx, record); err != nil {
+		return err
+	}
+	return s.invalidatePasswordCache(ctx, record.ID)
+}
+
+func (s *Service) Delete(ctx context.Context, actor Actor, id string) error {
+	if !actor.CanManage || actor.UserID == "" || strings.TrimSpace(id) == "" {
+		return ErrForbidden
+	}
+	record, err := s.store.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if record.ID == actor.UserID {
+		return ErrForbidden
+	}
+	return s.store.Delete(ctx, id)
+}
+
+func (s *Service) invalidatePasswordCache(ctx context.Context, userID string) error {
+	if s.cache == nil {
+		return nil
+	}
+	key, err := s.cache.KeyBuilder().Build("user", "password", userID)
+	if err != nil {
+		return err
+	}
+	return s.cache.Del(ctx, key)
+}
+
+func canAccess(actor Actor, record *model.User) bool {
+	return record != nil && actor.UserID != "" && (actor.CanManage || record.ID == actor.UserID)
 }
 
 func validUsername(username string) bool {

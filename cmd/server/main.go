@@ -79,7 +79,7 @@ func main() {
 	listHandler := api.NewListHandler(listService)
 	limitService := limiter.NewService(cfg, safeRedis, limiter.WithListChecker(listService))
 	limitHandler := api.NewLimitHandler(limitService)
-	userService := usersvc.NewService(cfg, usersvc.NewGormStore(db))
+	userService := usersvc.NewService(cfg, usersvc.NewGormStore(db), usersvc.WithCache(safeRedis))
 	userPublicHandler := api.NewUserPublicHandler(userService)
 	userHandler := api.NewUserHandler(userService)
 

@@ -69,6 +69,40 @@ func TestUserHandlerForbidden(t *testing.T) {
 	}
 }
 
+func TestUserHandlerUpdateStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUserHandler(&fakeUserService{user: &model.User{
+		BaseModel: model.BaseModel{ID: "user-002"},
+		Username:  "user_002",
+		Status:    model.StatusDisabled,
+	}})
+	router := testUserRouter(handler, []string{"admin"}, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/users/user-002/status", strings.NewReader(`{"status":"disabled"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUserHandlerUpdatePassword(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUserHandler(&fakeUserService{})
+	router := testUserRouter(handler, nil, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/users/user-001/password", strings.NewReader(`{"oldPassword":"Old_1234","newPassword":"New_1234"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func testUserRouter(handler *UserHandler, roles []string, permissions []string) *gin.Engine {
 	router := gin.New()
 	group := router.Group("/api")
@@ -98,4 +132,20 @@ func (s *fakeUserService) List(_ context.Context, _ usersvc.Actor) ([]model.User
 
 func (s *fakeUserService) Get(_ context.Context, _ usersvc.Actor, _ string) (*model.User, error) {
 	return s.user, s.err
+}
+
+func (s *fakeUserService) Update(_ context.Context, _ usersvc.Actor, _ usersvc.UpdateInput) (*model.User, error) {
+	return s.user, s.err
+}
+
+func (s *fakeUserService) UpdateStatus(_ context.Context, _ usersvc.Actor, _ usersvc.UpdateStatusInput) (*model.User, error) {
+	return s.user, s.err
+}
+
+func (s *fakeUserService) UpdatePassword(_ context.Context, _ usersvc.Actor, _ usersvc.UpdatePasswordInput) error {
+	return s.err
+}
+
+func (s *fakeUserService) Delete(_ context.Context, _ usersvc.Actor, _ string) error {
+	return s.err
 }

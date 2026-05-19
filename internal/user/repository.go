@@ -51,3 +51,11 @@ func (s *GormStore) FindByID(ctx context.Context, id string) (*model.User, error
 	}
 	return &user, nil
 }
+
+func (s *GormStore) Update(ctx context.Context, user *model.User) error {
+	return s.db.WithContext(ctx).Save(user).Error
+}
+
+func (s *GormStore) Delete(ctx context.Context, id string) error {
+	return s.db.WithContext(ctx).Delete(&model.User{}, "id = ?", id).Error
+}
