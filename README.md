@@ -14,18 +14,20 @@
 - M2M APP 创建、Secret 重置、HMAC-SHA256 签名校验、时间戳校验和重放拒绝。
 - OIDC/OAuth2 基础端点：discovery、authorize、token、jwks、userinfo。
 - APP 管理、服务注册/审核/发现、黑名单、白名单管理接口。
+- `/ui/` 内嵌轻量管理后台，登录后可查看用户、APP、角色、OIDC Client、服务、日志、统计和健康检测数据。
+- 用户注册、用户管理、角色权限管理、OIDC Client 管理接口。
+- 日志查询、健康检测日志查询、限流统计查询和 Prometheus `/metrics` 指标。
+- 服务周期性健康检测任务，状态变化后同步服务发现列表。
 - Redis 分布式令牌桶限流，Redis 异常时本地令牌桶降级。
 - Redis Key 统一 `serviceCode` 前缀隔离，SafeRedisClient 会拦截跨前缀访问。
 - RBAC 中间件和权限点初始化，管理接口按权限保护。
 - Linux amd64 宝塔部署包构建，单个静态 Go 二进制运行。
 
-尚未完成或仅完成基础模型：
+当前限制：
 
-- `/ui/` 内嵌管理后台尚未实现。
-- 用户管理、角色管理、OIDC Client 管理接口尚未实现。
-- 日志查询、限流统计查询、Prometheus 指标尚未实现。
-- 服务周期性健康检测任务尚未实现，目前支持服务状态字段和发现列表同步。
-- OIDC authorization code 流依赖 `oidc_clients` 数据，当前没有公开管理接口创建 OIDC Client。
+- `/ui/` 是轻量单页后台，聚焦核心数据查看和入口操作，不是完整前端框架。
+- 限流规则仍使用当前默认令牌桶配置，本轮未扩展动态限流规则 CRUD。
+- 操作日志、鉴权日志表已可查询，业务侧精细审计埋点可继续按事件类型补充。
 
 ## 环境要求
 
@@ -56,7 +58,7 @@ go mod download
 运行测试：
 
 ```powershell
-$env:GOCACHE="./.gocache"
+$env:GOCACHE="$PWD\.gocache"
 go test ./...
 ```
 
@@ -103,6 +105,8 @@ AUTH_LIMIT_JWT_PUBLIC_KEY_PATH=./certs/jwt_public.pem
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/health` | 健康检查 |
+| GET | `/metrics` | Prometheus 指标 |
+| GET | `/ui/` | 内嵌轻量管理后台 |
 
 鉴权接口：
 
@@ -128,9 +132,22 @@ OIDC/OAuth2 接口：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| POST | `/api/users/register` | 用户注册 |
+| GET | `/api/users` | 用户列表 |
+| GET/PUT/DELETE | `/api/users/:id` | 用户详情、资料更新、删除 |
+| PUT | `/api/users/:id/status` | 启用或禁用用户 |
+| PUT | `/api/users/:id/password` | 修改用户密码 |
+| PUT | `/api/users/:id/roles` | 分配用户角色 |
+| GET | `/api/permissions` | 权限列表 |
+| GET/POST | `/api/roles` | 角色列表、创建 |
+| GET/PUT/DELETE | `/api/roles/:id` | 角色详情、更新、删除 |
 | GET/POST | `/api/apps` | APP 列表、创建 |
 | GET/PUT/DELETE | `/api/apps/:id` | APP 详情、更新、删除 |
 | POST | `/api/apps/:id/reset-secret` | 重置 APP Secret |
+| PUT | `/api/apps/:id/roles` | 分配 APP 角色 |
+| GET/POST | `/api/oidc-clients` | OIDC Client 列表、创建 |
+| GET/PUT/DELETE | `/api/oidc-clients/:id` | OIDC Client 详情、更新、删除 |
+| POST | `/api/oidc-clients/:id/reset-secret` | 重置 OIDC Client Secret |
 | GET/POST | `/api/services` | 服务列表、注册 |
 | GET | `/api/services/discover` | 服务发现 |
 | GET/PUT/DELETE | `/api/services/:id` | 服务详情、更新、删除 |
@@ -139,6 +156,9 @@ OIDC/OAuth2 接口：
 | DELETE | `/api/blacklists/:id` | 删除黑名单 |
 | GET/POST | `/api/whitelists` | 白名单列表、创建 |
 | DELETE | `/api/whitelists/:id` | 删除白名单 |
+| GET | `/api/logs` | 日志查询 |
+| GET | `/api/health-checks` | 健康检测日志查询 |
+| GET | `/api/limit-statistics` | 限流统计查询 |
 
 限流校验接口：
 
