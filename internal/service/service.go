@@ -37,6 +37,8 @@ type Store interface {
 	Update(ctx context.Context, service *model.Service) error
 	Delete(ctx context.Context, id string) error
 	ListDiscoverable(ctx context.Context) ([]model.Service, error)
+	ListHealthCheckTargets(ctx context.Context) ([]model.Service, error)
+	CreateHealthCheckLog(ctx context.Context, log *model.HealthCheckLog) error
 }
 
 type Cache interface {
@@ -262,6 +264,29 @@ func (s *Service) SyncDiscovery(ctx context.Context) error {
 		return ErrUnavailable
 	}
 	return nil
+}
+
+func (s *Service) ListHealthCheckTargets(ctx context.Context) ([]model.Service, error) {
+	return s.store.ListHealthCheckTargets(ctx)
+}
+
+func (s *Service) UpdateHealthStatus(ctx context.Context, id string, status string) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(status) == "" {
+		return ErrInvalidInput
+	}
+	record, err := s.store.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	record.HealthStatus = status
+	if err := s.store.Update(ctx, record); err != nil {
+		return err
+	}
+	return s.SyncDiscovery(ctx)
+}
+
+func (s *Service) CreateHealthCheckLog(ctx context.Context, log *model.HealthCheckLog) error {
+	return s.store.CreateHealthCheckLog(ctx, log)
 }
 
 func canAccess(actor Actor, record *model.Service) bool {

@@ -88,6 +88,31 @@ func TestDiscoverFiltersHealthyApprovedServices(t *testing.T) {
 	}
 }
 
+func TestUpdateHealthStatusSyncsDiscovery(t *testing.T) {
+	store := &fakeStore{service: &model.Service{
+		BaseModel:    model.BaseModel{ID: "svc-001"},
+		Name:         "orders",
+		Code:         "orders",
+		OwnerUserID:  "user-001",
+		BaseURL:      "http://orders.local:8080",
+		Status:       StatusApproved,
+		Approved:     true,
+		HealthStatus: HealthUnknown,
+	}}
+	cache := newFakeServiceCache(t)
+	service := NewService(config.Default(), store, cache)
+
+	if err := service.UpdateHealthStatus(t.Context(), "svc-001", HealthHealthy); err != nil {
+		t.Fatalf("UpdateHealthStatus() error = %v", err)
+	}
+	if store.service.HealthStatus != HealthHealthy {
+		t.Fatalf("service = %#v", store.service)
+	}
+	if !strings.Contains(cache.values["authlimit:service:list"], "orders") {
+		t.Fatalf("service list cache = %#v", cache.values)
+	}
+}
+
 type fakeStore struct {
 	service      *model.Service
 	services     []model.Service
@@ -140,6 +165,14 @@ func (s *fakeStore) ListDiscoverable(_ context.Context) ([]model.Service, error)
 		return []model.Service{*s.service}, nil
 	}
 	return nil, nil
+}
+
+func (s *fakeStore) ListHealthCheckTargets(_ context.Context) ([]model.Service, error) {
+	return s.services, nil
+}
+
+func (s *fakeStore) CreateHealthCheckLog(_ context.Context, _ *model.HealthCheckLog) error {
+	return nil
 }
 
 type fakeServiceCache struct {

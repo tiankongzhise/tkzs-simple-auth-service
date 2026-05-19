@@ -69,3 +69,19 @@ func (s *GormStore) ListDiscoverable(ctx context.Context) ([]model.Service, erro
 	}
 	return services, nil
 }
+
+func (s *GormStore) ListHealthCheckTargets(ctx context.Context) ([]model.Service, error) {
+	var services []model.Service
+	err := s.db.WithContext(ctx).
+		Where("approved = ? AND status = ?", true, StatusApproved).
+		Order("created_at DESC").
+		Find(&services).Error
+	if err != nil {
+		return nil, err
+	}
+	return services, nil
+}
+
+func (s *GormStore) CreateHealthCheckLog(ctx context.Context, log *model.HealthCheckLog) error {
+	return s.db.WithContext(ctx).Create(log).Error
+}

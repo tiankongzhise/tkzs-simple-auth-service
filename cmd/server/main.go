@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/auth"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/bootstrap"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/database"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/healthcheck"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/limiter"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
@@ -79,6 +81,8 @@ func main() {
 	appHandler := api.NewAppHandler(appService)
 	serviceService := servicesvc.NewService(cfg, servicesvc.NewGormStore(db), safeRedis)
 	serviceHandler := api.NewServiceHandler(serviceService)
+	healthChecker := healthcheck.NewChecker(cfg, serviceService, nil)
+	healthChecker.Start(context.Background())
 	listService := listing.NewService(listing.NewGormStore(db), safeRedis)
 	listHandler := api.NewListHandler(listService)
 	statisticsService := statistics.NewService(statistics.NewGormStore(db))
