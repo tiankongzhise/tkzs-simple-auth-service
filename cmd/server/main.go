@@ -22,6 +22,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/server"
 	servicesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/service"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/statistics"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/ui"
 	usersvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/user"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/jwtx"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
@@ -83,6 +84,10 @@ func main() {
 	serviceHandler := api.NewServiceHandler(serviceService)
 	healthChecker := healthcheck.NewChecker(cfg, serviceService, nil)
 	healthChecker.Start(context.Background())
+	uiHandler, err := ui.NewHandler(cfg.UI.PathPrefix)
+	if err != nil {
+		log.Fatalf("load ui assets: %v", err)
+	}
 	listService := listing.NewService(listing.NewGormStore(db), safeRedis)
 	listHandler := api.NewListHandler(listService)
 	statisticsService := statistics.NewService(statistics.NewGormStore(db))
@@ -107,6 +112,7 @@ func main() {
 		server.WithAuthRoutes(authHandler),
 		server.WithOIDCRoutes(oidcHandler),
 		server.WithLimitRoutes(limitHandler),
+		server.WithUIRoutes(uiHandler),
 		server.WithAPIRoutes(userPublicHandler),
 		server.WithAPIRoutes(userHandler, api.AuthMiddleware(authService)),
 		server.WithAPIRoutes(permissionHandler, api.AuthMiddleware(authService)),

@@ -71,6 +71,34 @@ func TestMetricsEndpointExposed(t *testing.T) {
 	}
 }
 
+func TestUIRoutesServedWhenEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(config.Default(), WithUIRoutes(testUIRegistrar{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUIRoutesSkippedWhenDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := config.Default()
+	cfg.UI.Enable = false
+	router := NewRouter(cfg, WithUIRoutes(testUIRegistrar{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
 func TestAPIRoutesUseMiddlewares(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := NewRouter(config.Default(), WithAPIRoutes(
@@ -99,5 +127,13 @@ func (testRegistrar) RegisterRoutes(group *gin.RouterGroup) {
 			return
 		}
 		c.Status(http.StatusOK)
+	})
+}
+
+type testUIRegistrar struct{}
+
+func (testUIRegistrar) RegisterRoutes(router *gin.Engine) {
+	router.GET("/ui/", func(c *gin.Context) {
+		c.String(http.StatusOK, "ui")
 	})
 }
