@@ -1,0 +1,113 @@
+package limiter
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
+)
+
+func TestVerifyUsesRedisTokenBucket(t *testing.T) {
+	cache := newFakeCache(t)
+	cache.result = []any{int64(1), int64(9), int64(1779091200000)}
+	service := NewService(config.Default(), cache)
+	service.SetNow(func() time.Time { return time.Unix(1779091200, 0) })
+
+	result, err := service.Verify(t.Context(), VerifyInput{
+		ServiceID: "svc-001",
+		IP:        "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if !result.Allowed || result.Remaining != 9 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(cache.keysPassed) != 1 || cache.keysPassed[0] != "authlimit:limit:bucket:svc-001:ip:127.0.0.1" {
+		t.Fatalf("keys = %#v", cache.keysPassed)
+	}
+}
+
+func TestVerifyRejectsWhenAnyDimensionLimited(t *testing.T) {
+	cfg := config.Default()
+	cfg.Limit.Dimensions = []string{"ip", "user_id"}
+	cache := newFakeCache(t)
+	cache.results = [][]any{
+		{int64(1), int64(9), int64(1779091200000)},
+		{int64(0), int64(0), int64(1779091210000)},
+	}
+	service := NewService(cfg, cache)
+	service.SetNow(func() time.Time { return time.Unix(1779091200, 0) })
+
+	result, err := service.Verify(t.Context(), VerifyInput{
+		ServiceID: "svc-001",
+		IP:        "127.0.0.1",
+		UserID:    "user-001",
+	})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if result.Allowed || result.Remaining != 0 {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestVerifyFallsBackToLocalLimiter(t *testing.T) {
+	cfg := config.Default()
+	cfg.Limit.LocalFallbackCapacity = 1
+	cfg.Limit.LocalFallbackRatePerSecond = 1
+	cache := newFakeCache(t)
+	cache.err = errors.New("redis down")
+	service := NewService(cfg, cache)
+	now := time.Unix(1779091200, 0)
+	service.SetNow(func() time.Time { return now })
+
+	first, err := service.Verify(t.Context(), VerifyInput{ServiceID: "svc-001", IP: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("Verify() first error = %v", err)
+	}
+	second, err := service.Verify(t.Context(), VerifyInput{ServiceID: "svc-001", IP: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("Verify() second error = %v", err)
+	}
+	if !first.Allowed || second.Allowed {
+		t.Fatalf("first = %#v, second = %#v", first, second)
+	}
+}
+
+type fakeCache struct {
+	keys       *redisx.KeyBuilder
+	result     []any
+	results    [][]any
+	err        error
+	keysPassed []string
+}
+
+func newFakeCache(t *testing.T) *fakeCache {
+	t.Helper()
+	keys, err := redisx.NewKeyBuilder("authlimit")
+	if err != nil {
+		t.Fatalf("NewKeyBuilder() error = %v", err)
+	}
+	return &fakeCache{keys: keys}
+}
+
+func (c *fakeCache) KeyBuilder() *redisx.KeyBuilder {
+	return c.keys
+}
+
+func (c *fakeCache) Eval(_ context.Context, _ string, keys []string, _ ...string) (any, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	c.keysPassed = append(c.keysPassed, keys...)
+	if len(c.results) > 0 {
+		result := c.results[0]
+		c.results = c.results[1:]
+		return result, nil
+	}
+	return c.result, nil
+}

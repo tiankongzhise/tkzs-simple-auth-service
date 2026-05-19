@@ -24,6 +24,7 @@ type EngineRouteRegistrar interface {
 type routerOptions struct {
 	auth      RouteRegistrar
 	oidc      EngineRouteRegistrar
+	limit     EngineRouteRegistrar
 	apiRoutes []apiRouteRegistration
 }
 
@@ -43,6 +44,12 @@ func WithAuthRoutes(registrar RouteRegistrar) Option {
 func WithOIDCRoutes(registrar EngineRouteRegistrar) Option {
 	return func(opts *routerOptions) {
 		opts.oidc = registrar
+	}
+}
+
+func WithLimitRoutes(registrar EngineRouteRegistrar) Option {
+	return func(opts *routerOptions) {
+		opts.limit = registrar
 	}
 }
 
@@ -76,6 +83,9 @@ func NewRouter(cfg *config.Config, options ...Option) *gin.Engine {
 	})
 	if opts.oidc != nil {
 		opts.oidc.RegisterRoutes(router)
+	}
+	if opts.limit != nil {
+		opts.limit.RegisterRoutes(router)
 	}
 
 	api := router.Group("/api")
