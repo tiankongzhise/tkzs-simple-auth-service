@@ -74,7 +74,7 @@ func main() {
 		cfg,
 		server.WithAuthRoutes(authHandler),
 		server.WithOIDCRoutes(oidcHandler),
-		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService)),
+		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 	)
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := router.Run(addr); err != nil {

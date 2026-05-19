@@ -54,3 +54,34 @@ func TestRequestIDMiddlewareGeneratesMissingRequestID(t *testing.T) {
 		t.Fatal("request id header is empty")
 	}
 }
+
+func TestAPIRoutesUseMiddlewares(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(config.Default(), WithAPIRoutes(
+		testRegistrar{},
+		func(c *gin.Context) {
+			c.Set("middleware_ran", true)
+			c.Next()
+		},
+	))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+type testRegistrar struct{}
+
+func (testRegistrar) RegisterRoutes(group *gin.RouterGroup) {
+	group.GET("/test", func(c *gin.Context) {
+		if !c.GetBool("middleware_ran") {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Status(http.StatusOK)
+	})
+}
