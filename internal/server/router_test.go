@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/response"
 )
 
@@ -118,6 +120,28 @@ func TestAPIRoutesUseMiddlewares(t *testing.T) {
 	}
 }
 
+func TestOperationAuditMiddlewareRecordsMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := &testAuditRecorder{}
+	router := gin.New()
+	group := router.Group("/api")
+	group.Use(func(c *gin.Context) {
+		c.Set("auth_user_id", "user-001")
+		c.Next()
+	}, OperationAuditMiddleware(recorder))
+	group.POST("/apps", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apps", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if recorder.log.ActorID != "user-001" || recorder.log.Resource != "apps" || recorder.log.Result != "success" {
+		t.Fatalf("log = %#v", recorder.log)
+	}
+}
+
 type testRegistrar struct{}
 
 func (testRegistrar) RegisterRoutes(group *gin.RouterGroup) {
@@ -136,4 +160,13 @@ func (testUIRegistrar) RegisterRoutes(router *gin.Engine) {
 	router.GET("/ui/", func(c *gin.Context) {
 		c.String(http.StatusOK, "ui")
 	})
+}
+
+type testAuditRecorder struct {
+	log model.OperationLog
+}
+
+func (r *testAuditRecorder) RecordOperation(_ context.Context, log model.OperationLog) error {
+	r.log = log
+	return nil
 }

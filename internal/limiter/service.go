@@ -73,6 +73,10 @@ type Recorder interface {
 	RecordLimit(ctx context.Context, serviceID string, dimension string, key string, allowed bool, remaining int, resetAt int64) error
 }
 
+type RuleRecorder interface {
+	RecordLimitWithRule(ctx context.Context, serviceID string, dimension string, key string, allowed bool, remaining int, resetAt int64, blacklistHits int, blockSeconds int) error
+}
+
 type RuleProvider interface {
 	ListEnabledRules(ctx context.Context, serviceID string) ([]model.RateLimitRule, error)
 }
@@ -147,6 +151,7 @@ func (s *Service) Verify(ctx context.Context, input VerifyInput) (*VerifyResult,
 			return &VerifyResult{Allowed: true, Remaining: s.cfg.Limit.DefaultCapacity, ResetAt: s.now().Unix()}, nil
 		}
 		if hit.Blacklisted {
+			s.recordBlacklistHit(ctx, input, hit)
 			return nil, ErrBlacklisted
 		}
 	}
@@ -167,7 +172,7 @@ func (s *Service) Verify(ctx context.Context, input VerifyInput) (*VerifyResult,
 		if err != nil {
 			result = s.fallback.allow(input.ServiceID+":"+check.Granularity+":"+check.Dimension+":"+check.Value, check.FallbackCapacity, check.FallbackRatePerSecond, s.now())
 		}
-		s.record(ctx, input.ServiceID, check.Dimension, check.Value, result)
+		s.record(ctx, input.ServiceID, check, result)
 		results = append(results, *result)
 		if !result.Allowed {
 			return result, nil
@@ -176,15 +181,55 @@ func (s *Service) Verify(ctx context.Context, input VerifyInput) (*VerifyResult,
 	return strictest(results), nil
 }
 
-func (s *Service) record(ctx context.Context, serviceID string, dimension string, value string, result *VerifyResult) {
+func (s *Service) recordBlacklistHit(ctx context.Context, input VerifyInput, hit *listing.HitResult) {
+	if hit == nil || s.recorder == nil {
+		return
+	}
+	dimension, value := hitSubject(hit, input)
+	if dimension == "" || value == "" {
+		return
+	}
+	_ = s.recorder.RecordLimit(ctx, input.ServiceID, dimension, value, false, 0, s.now().Unix())
+}
+
+func hitSubject(hit *listing.HitResult, input VerifyInput) (string, string) {
+	if hit.Blacklist != nil {
+		switch hit.Blacklist.Type {
+		case listing.TypeIP:
+			return "blacklist_ip", hit.Blacklist.Key
+		case listing.TypeUser:
+			return "blacklist_user", hit.Blacklist.Key
+		case listing.TypeApp:
+			return "blacklist_app", hit.Blacklist.Key
+		case listing.TypeToken:
+			return "blacklist_token", hit.Blacklist.Key
+		}
+	}
+	if input.IP != "" {
+		return "blacklist_ip", input.IP
+	}
+	if input.UserID != "" {
+		return "blacklist_user", input.UserID
+	}
+	if input.AppID != "" {
+		return "blacklist_app", input.AppID
+	}
+	return "", ""
+}
+
+func (s *Service) record(ctx context.Context, serviceID string, check ruleCheck, result *VerifyResult) {
 	if result == nil {
 		return
 	}
-	metrics.RecordLimit(serviceID, dimension, result.Allowed)
+	metrics.RecordLimit(serviceID, check.Dimension, result.Allowed)
 	if s.recorder == nil {
 		return
 	}
-	_ = s.recorder.RecordLimit(ctx, serviceID, dimension, value, result.Allowed, result.Remaining, result.ResetAt)
+	if recorder, ok := s.recorder.(RuleRecorder); ok {
+		_ = recorder.RecordLimitWithRule(ctx, serviceID, check.Dimension, check.Value, result.Allowed, result.Remaining, result.ResetAt, check.BlacklistHits, check.BlockSeconds)
+		return
+	}
+	_ = s.recorder.RecordLimit(ctx, serviceID, check.Dimension, check.Value, result.Allowed, result.Remaining, result.ResetAt)
 }
 
 func (s *Service) checkDimension(ctx context.Context, serviceID string, check ruleCheck) (*VerifyResult, error) {

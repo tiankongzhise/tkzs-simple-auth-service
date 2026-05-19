@@ -87,6 +87,17 @@ func (s *Service) CreateBlacklist(ctx context.Context, actor Actor, input Create
 	if !actor.IsAdmin || !validInput(input, true) {
 		return nil, ErrInvalidInput
 	}
+	return s.createBlacklist(ctx, actor.UserID, input)
+}
+
+func (s *Service) CreateTemporaryBlacklist(ctx context.Context, input CreateInput) (*model.Blacklist, error) {
+	if input.ExpiresAt == nil || input.Permanent || !validInput(input, false) {
+		return nil, ErrInvalidInput
+	}
+	return s.createBlacklist(ctx, "system", input)
+}
+
+func (s *Service) createBlacklist(ctx context.Context, createdBy string, input CreateInput) (*model.Blacklist, error) {
 	entry := &model.Blacklist{
 		ServiceID: input.ServiceID,
 		Type:      input.Type,
@@ -94,7 +105,7 @@ func (s *Service) CreateBlacklist(ctx context.Context, actor Actor, input Create
 		Permanent: input.Permanent,
 		Reason:    input.Reason,
 		ExpiresAt: input.ExpiresAt,
-		CreatedBy: actor.UserID,
+		CreatedBy: createdBy,
 	}
 	if err := s.store.CreateBlacklist(ctx, entry); err != nil {
 		return nil, err

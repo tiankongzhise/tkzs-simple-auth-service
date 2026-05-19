@@ -47,6 +47,14 @@ func (s *GormStore) RecordLimit(ctx context.Context, log model.LimitLog, bucket 
 	})
 }
 
+func (s *GormStore) CountBlockedSince(ctx context.Context, serviceID string, dimension string, key string, since time.Time) (int64, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(&model.LimitLog{}).
+		Where("service_id = ? AND dimension = ? AND key = ? AND allowed = ? AND created_at >= ?", serviceID, dimension, key, false, since).
+		Count(&count).Error
+	return count, err
+}
+
 func (s *GormStore) ListLimitStatistics(ctx context.Context, filter LimitStatisticFilter) ([]model.LimitStatistic, error) {
 	var items []model.LimitStatistic
 	query := s.db.WithContext(ctx).Model(&model.LimitStatistic{})

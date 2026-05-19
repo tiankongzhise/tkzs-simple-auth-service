@@ -59,12 +59,63 @@ func TestListHealthChecksUsesHealthLogs(t *testing.T) {
 	}
 }
 
+func TestRecordOperationRequiresCoreFields(t *testing.T) {
+	store := &fakeStore{}
+	service := NewService(store)
+
+	if err := service.RecordOperation(t.Context(), model.OperationLog{
+		ActorType: "user",
+		Action:    "POST",
+		Resource:  "/api/apps",
+		Result:    "success",
+	}); err != nil {
+		t.Fatalf("RecordOperation() error = %v", err)
+	}
+	if store.operationLog.Action != "POST" {
+		t.Fatalf("operation log = %#v", store.operationLog)
+	}
+	if err := service.RecordOperation(t.Context(), model.OperationLog{}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("RecordOperation() invalid error = %v", err)
+	}
+}
+
+func TestRecordAuthRequiresCoreFields(t *testing.T) {
+	store := &fakeStore{}
+	service := NewService(store)
+
+	if err := service.RecordAuth(t.Context(), model.AuthLog{
+		SubjectType: "user",
+		Event:       "login_failed",
+		Result:      "failure",
+	}); err != nil {
+		t.Fatalf("RecordAuth() error = %v", err)
+	}
+	if store.authLog.Event != "login_failed" {
+		t.Fatalf("auth log = %#v", store.authLog)
+	}
+	if err := service.RecordAuth(t.Context(), model.AuthLog{}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("RecordAuth() invalid error = %v", err)
+	}
+}
+
 type fakeStore struct {
+	operationLog  model.OperationLog
+	authLog       model.AuthLog
 	lastFilter    LogFilter
 	operationLogs []model.OperationLog
 	authLogs      []model.AuthLog
 	limitLogs     []model.LimitLog
 	healthLogs    []model.HealthCheckLog
+}
+
+func (s *fakeStore) CreateOperationLog(_ context.Context, log *model.OperationLog) error {
+	s.operationLog = *log
+	return nil
+}
+
+func (s *fakeStore) CreateAuthLog(_ context.Context, log *model.AuthLog) error {
+	s.authLog = *log
+	return nil
 }
 
 func (s *fakeStore) ListOperationLogs(_ context.Context, filter LogFilter) ([]model.OperationLog, error) {

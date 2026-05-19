@@ -9,6 +9,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/auth"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/response"
 )
 
@@ -23,9 +24,14 @@ type M2MService interface {
 	Verify(ctx context.Context, input m2m.VerifyInput) (*m2m.VerifyResult, error)
 }
 
+type AuthAuditRecorder interface {
+	RecordAuth(ctx context.Context, log model.AuthLog) error
+}
+
 type AuthHandler struct {
 	service AuthService
 	m2m     M2MService
+	audit   AuthAuditRecorder
 }
 
 type loginRequest struct {
@@ -43,6 +49,11 @@ type logoutRequest struct {
 
 func NewAuthHandler(service AuthService, m2mService M2MService) *AuthHandler {
 	return &AuthHandler{service: service, m2m: m2mService}
+}
+
+func (h *AuthHandler) WithAudit(audit AuthAuditRecorder) *AuthHandler {
+	h.audit = audit
+	return h
 }
 
 func (h *AuthHandler) RegisterRoutes(group *gin.RouterGroup) {
@@ -69,6 +80,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		UserAgent: c.Request.UserAgent(),
 	})
 	if err != nil {
+		h.recordAuthFailure(c, "", "user", "login_failed", err)
 		writeAuthError(c, err)
 		return
 	}
@@ -135,10 +147,26 @@ func (h *AuthHandler) M2M(c *gin.Context) {
 		Params:    params,
 	})
 	if err != nil {
+		h.recordAuthFailure(c, c.GetHeader("appId"), "app", "m2m_failed", err)
 		writeM2MError(c, err)
 		return
 	}
 	response.OK(c, result)
+}
+
+func (h *AuthHandler) recordAuthFailure(c *gin.Context, subjectID string, subjectType string, event string, err error) {
+	if h.audit == nil {
+		return
+	}
+	_ = h.audit.RecordAuth(c.Request.Context(), model.AuthLog{
+		SubjectID:   subjectID,
+		SubjectType: subjectType,
+		Event:       event,
+		IP:          c.ClientIP(),
+		UserAgent:   c.Request.UserAgent(),
+		Result:      "failure",
+		Reason:      err.Error(),
+	})
 }
 
 func writeAuthError(c *gin.Context, err error) {

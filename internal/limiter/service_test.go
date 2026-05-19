@@ -159,13 +159,17 @@ func TestVerifySkipsRateLimitWhenWhitelisted(t *testing.T) {
 }
 
 func TestVerifyRejectsBlacklistedSubject(t *testing.T) {
+	recorder := &fakeRecorder{}
 	service := NewService(config.Default(), newFakeCache(t), WithListChecker(&fakeListChecker{
 		result: &listing.HitResult{Blacklisted: true},
-	}))
+	}), WithRecorder(recorder))
 
 	_, err := service.Verify(t.Context(), VerifyInput{ServiceID: "svc-001", IP: "127.0.0.1"})
 	if !errors.Is(err, ErrBlacklisted) {
 		t.Fatalf("Verify() error = %v", err)
+	}
+	if recorder.dimension != "blacklist_ip" || !recorder.blocked {
+		t.Fatalf("recorder = %#v", recorder)
 	}
 }
 
@@ -228,6 +232,7 @@ type fakeRecorder struct {
 	dimension string
 	key       string
 	allowed   bool
+	blocked   bool
 	remaining int
 	resetAt   int64
 }
@@ -237,7 +242,12 @@ func (r *fakeRecorder) RecordLimit(_ context.Context, serviceID string, dimensio
 	r.dimension = dimension
 	r.key = key
 	r.allowed = allowed
+	r.blocked = !allowed
 	r.remaining = remaining
 	r.resetAt = resetAt
 	return nil
+}
+
+func (r *fakeRecorder) RecordLimitWithRule(ctx context.Context, serviceID string, dimension string, key string, allowed bool, remaining int, resetAt int64, _ int, _ int) error {
+	return r.RecordLimit(ctx, serviceID, dimension, key, allowed, remaining, resetAt)
 }

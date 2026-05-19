@@ -22,6 +22,8 @@ const (
 )
 
 type Store interface {
+	CreateOperationLog(ctx context.Context, log *model.OperationLog) error
+	CreateAuthLog(ctx context.Context, log *model.AuthLog) error
 	ListOperationLogs(ctx context.Context, filter LogFilter) ([]model.OperationLog, error)
 	ListAuthLogs(ctx context.Context, filter LogFilter) ([]model.AuthLog, error)
 	ListLimitLogs(ctx context.Context, filter LogFilter) ([]model.LimitLog, error)
@@ -58,6 +60,20 @@ type LogResult struct {
 
 func NewService(store Store) *Service {
 	return &Service{store: store}
+}
+
+func (s *Service) RecordOperation(ctx context.Context, log model.OperationLog) error {
+	if log.ActorType == "" || log.Action == "" || log.Resource == "" || log.Result == "" {
+		return ErrInvalidInput
+	}
+	return s.store.CreateOperationLog(ctx, &log)
+}
+
+func (s *Service) RecordAuth(ctx context.Context, log model.AuthLog) error {
+	if log.SubjectType == "" || log.Event == "" || log.Result == "" {
+		return ErrInvalidInput
+	}
+	return s.store.CreateAuthLog(ctx, &log)
 }
 
 func (s *Service) ListLogs(ctx context.Context, actor Actor, filter LogFilter) (*LogResult, error) {

@@ -60,6 +60,29 @@ func TestCheckBlacklistHit(t *testing.T) {
 	}
 }
 
+func TestCreateTemporaryBlacklistRequiresExpiryAndCaches(t *testing.T) {
+	store := &fakeStore{}
+	cache := newFakeCache(t)
+	service := NewService(store, cache)
+	expiresAt := time.Now().Add(time.Minute)
+
+	entry, err := service.CreateTemporaryBlacklist(t.Context(), CreateInput{
+		ServiceID: "svc-001",
+		Type:      TypeIP,
+		Key:       "127.0.0.1",
+		ExpiresAt: &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateTemporaryBlacklist() error = %v", err)
+	}
+	if entry.CreatedBy != "system" {
+		t.Fatalf("entry = %#v", entry)
+	}
+	if cache.values["authlimit:blacklist:ip:svc-001:127.0.0.1"] != "1" {
+		t.Fatalf("cache = %#v", cache.values)
+	}
+}
+
 type fakeStore struct {
 	blacklist  *model.Blacklist
 	whitelist  *model.Whitelist

@@ -15,6 +15,14 @@ func NewGormStore(db *gorm.DB) *GormStore {
 	return &GormStore{db: db}
 }
 
+func (s *GormStore) CreateOperationLog(ctx context.Context, log *model.OperationLog) error {
+	return s.db.WithContext(ctx).Create(log).Error
+}
+
+func (s *GormStore) CreateAuthLog(ctx context.Context, log *model.AuthLog) error {
+	return s.db.WithContext(ctx).Create(log).Error
+}
+
 func (s *GormStore) ListOperationLogs(ctx context.Context, filter LogFilter) ([]model.OperationLog, error) {
 	var items []model.OperationLog
 	query := baseLogQuery(s.db.WithContext(ctx).Model(&model.OperationLog{}), filter)

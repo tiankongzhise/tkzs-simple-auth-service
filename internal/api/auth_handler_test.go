@@ -17,6 +17,7 @@ import (
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/auth"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/response"
 )
 
@@ -52,7 +53,8 @@ func TestAuthHandlerLoginSuccess(t *testing.T) {
 
 func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := NewAuthHandler(&fakeAuthService{err: auth.ErrInvalidCredentials}, nil)
+	audit := &fakeAuthAuditRecorder{}
+	handler := NewAuthHandler(&fakeAuthService{err: auth.ErrInvalidCredentials}, nil).WithAudit(audit)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -64,6 +66,9 @@ func TestAuthHandlerLoginInvalidCredentials(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if audit.log.Event != "login_failed" || audit.log.SubjectType != "user" {
+		t.Fatalf("audit log = %#v", audit.log)
 	}
 }
 
@@ -194,7 +199,8 @@ func TestAuthHandlerM2MSuccess(t *testing.T) {
 
 func TestAuthHandlerM2MUnauthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	handler := NewAuthHandler(&fakeAuthService{}, &fakeM2MService{err: m2m.ErrInvalidSignature})
+	audit := &fakeAuthAuditRecorder{}
+	handler := NewAuthHandler(&fakeAuthService{}, &fakeM2MService{err: m2m.ErrInvalidSignature}).WithAudit(audit)
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/auth"))
 
@@ -208,6 +214,9 @@ func TestAuthHandlerM2MUnauthorized(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if audit.log.Event != "m2m_failed" || audit.log.SubjectID != "app00001" {
+		t.Fatalf("audit log = %#v", audit.log)
 	}
 }
 
@@ -240,6 +249,15 @@ type fakeM2MService struct {
 
 func (s *fakeM2MService) Verify(_ context.Context, _ m2m.VerifyInput) (*m2m.VerifyResult, error) {
 	return s.result, s.err
+}
+
+type fakeAuthAuditRecorder struct {
+	log model.AuthLog
+}
+
+func (r *fakeAuthAuditRecorder) RecordAuth(_ context.Context, log model.AuthLog) error {
+	r.log = log
+	return nil
 }
 
 func validHexSign() string {

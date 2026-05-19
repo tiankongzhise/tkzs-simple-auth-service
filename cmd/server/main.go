@@ -70,7 +70,8 @@ func main() {
 
 	authService := auth.NewService(cfg, auth.NewGormStore(db), safeRedis, jwtManager)
 	m2mService := m2m.NewService(cfg, m2m.NewGormStore(db), safeRedis)
-	authHandler := api.NewAuthHandler(authService, m2mService)
+	auditService := audit.NewService(audit.NewGormStore(db))
+	authHandler := api.NewAuthHandler(authService, m2mService).WithAudit(auditService)
 	oidcService := oidc.NewService(
 		cfg,
 		jwtManager,
@@ -91,7 +92,7 @@ func main() {
 	}
 	listService := listing.NewService(listing.NewGormStore(db), safeRedis)
 	listHandler := api.NewListHandler(listService)
-	statisticsService := statistics.NewService(statistics.NewGormStore(db))
+	statisticsService := statistics.NewService(statistics.NewGormStore(db)).WithBlacklistCreator(listService).WithAudit(auditService)
 	limitRuleService := limitrule.NewService(limitrule.NewGormStore(db))
 	limitRuleHandler := api.NewLimitRuleHandler(limitRuleService)
 	limitService := limiter.NewService(
@@ -111,7 +112,6 @@ func main() {
 	roleAssignmentHandler := api.NewRoleAssignmentHandler(roleService)
 	oidcClientService := oidcclientsvc.NewService(cfg, oidcclientsvc.NewGormStore(db))
 	oidcClientHandler := api.NewOIDCClientHandler(oidcClientService)
-	auditService := audit.NewService(audit.NewGormStore(db))
 	logHandler := api.NewLogHandler(auditService)
 	healthCheckHandler := api.NewHealthCheckHandler(auditService)
 	statisticsHandler := api.NewStatisticsHandler(statisticsService)
@@ -123,18 +123,18 @@ func main() {
 		server.WithLimitRoutes(limitHandler),
 		server.WithUIRoutes(uiHandler),
 		server.WithAPIRoutes(userPublicHandler),
-		server.WithAPIRoutes(userHandler, api.AuthMiddleware(authService)),
+		server.WithAPIRoutes(userHandler, api.AuthMiddleware(authService), server.OperationAuditMiddleware(auditService)),
 		server.WithAPIRoutes(permissionHandler, api.AuthMiddleware(authService)),
-		server.WithAPIRoutes(roleHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
-		server.WithAPIRoutes(roleAssignmentHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
-		server.WithAPIRoutes(oidcClientHandler, api.AuthMiddleware(authService), api.RequirePermission("oidc:manage")),
+		server.WithAPIRoutes(roleHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage"), server.OperationAuditMiddleware(auditService)),
+		server.WithAPIRoutes(roleAssignmentHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage"), server.OperationAuditMiddleware(auditService)),
+		server.WithAPIRoutes(oidcClientHandler, api.AuthMiddleware(authService), api.RequirePermission("oidc:manage"), server.OperationAuditMiddleware(auditService)),
 		server.WithAPIRoutes(logHandler, api.AuthMiddleware(authService), api.RequirePermission("log:read")),
 		server.WithAPIRoutes(healthCheckHandler, api.AuthMiddleware(authService), api.RequirePermission("health:read")),
 		server.WithAPIRoutes(statisticsHandler, api.AuthMiddleware(authService), api.RequirePermission("statistics:read")),
-		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
-		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),
-		server.WithAPIRoutes(limitRuleHandler, api.AuthMiddleware(authService), api.RequirePermission("limit:manage")),
-		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage")),
+		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage"), server.OperationAuditMiddleware(auditService)),
+		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage"), server.OperationAuditMiddleware(auditService)),
+		server.WithAPIRoutes(limitRuleHandler, api.AuthMiddleware(authService), api.RequirePermission("limit:manage"), server.OperationAuditMiddleware(auditService)),
+		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage"), server.OperationAuditMiddleware(auditService)),
 	)
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := router.Run(addr); err != nil {
