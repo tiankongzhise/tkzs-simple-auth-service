@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 )
 
@@ -78,6 +79,32 @@ func TestVerifyFallsBackToLocalLimiter(t *testing.T) {
 	}
 }
 
+func TestVerifySkipsRateLimitWhenWhitelisted(t *testing.T) {
+	cache := newFakeCache(t)
+	service := NewService(config.Default(), cache, WithListChecker(&fakeListChecker{
+		result: &listing.HitResult{Whitelisted: true},
+	}))
+
+	result, err := service.Verify(t.Context(), VerifyInput{ServiceID: "svc-001", IP: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if !result.Allowed || len(cache.keysPassed) != 0 {
+		t.Fatalf("result = %#v, keys = %#v", result, cache.keysPassed)
+	}
+}
+
+func TestVerifyRejectsBlacklistedSubject(t *testing.T) {
+	service := NewService(config.Default(), newFakeCache(t), WithListChecker(&fakeListChecker{
+		result: &listing.HitResult{Blacklisted: true},
+	}))
+
+	_, err := service.Verify(t.Context(), VerifyInput{ServiceID: "svc-001", IP: "127.0.0.1"})
+	if !errors.Is(err, ErrBlacklisted) {
+		t.Fatalf("Verify() error = %v", err)
+	}
+}
+
 type fakeCache struct {
 	keys       *redisx.KeyBuilder
 	result     []any
@@ -110,4 +137,13 @@ func (c *fakeCache) Eval(_ context.Context, _ string, keys []string, _ ...string
 		return result, nil
 	}
 	return c.result, nil
+}
+
+type fakeListChecker struct {
+	result *listing.HitResult
+	err    error
+}
+
+func (c *fakeListChecker) Check(_ context.Context, _ listing.HitInput) (*listing.HitResult, error) {
+	return c.result, c.err
 }

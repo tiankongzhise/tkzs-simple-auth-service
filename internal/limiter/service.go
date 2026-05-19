@@ -9,10 +9,14 @@ import (
 	"time"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/config"
+	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/pkg/redisx"
 )
 
-var ErrInvalidInput = errors.New("invalid limit input")
+var (
+	ErrInvalidInput = errors.New("invalid limit input")
+	ErrBlacklisted  = errors.New("limit subject blacklisted")
+)
 
 const tokenBucketScript = `
 local key = KEYS[1]
@@ -52,8 +56,13 @@ type Cache interface {
 type Service struct {
 	cfg      *config.Config
 	cache    Cache
+	lists    ListChecker
 	now      func() time.Time
 	fallback *localLimiter
+}
+
+type ListChecker interface {
+	Check(ctx context.Context, input listing.HitInput) (*listing.HitResult, error)
 }
 
 type VerifyInput struct {
@@ -71,13 +80,25 @@ type VerifyResult struct {
 	ResetAt   int64 `json:"resetAt"`
 }
 
-func NewService(cfg *config.Config, cache Cache) *Service {
-	return &Service{
+type Option func(*Service)
+
+func WithListChecker(lists ListChecker) Option {
+	return func(s *Service) {
+		s.lists = lists
+	}
+}
+
+func NewService(cfg *config.Config, cache Cache, options ...Option) *Service {
+	service := &Service{
 		cfg:      cfg,
 		cache:    cache,
 		now:      time.Now,
 		fallback: newLocalLimiter(cfg.Limit.LocalFallbackCapacity, cfg.Limit.LocalFallbackRatePerSecond),
 	}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *Service) SetNow(now func() time.Time) {
@@ -87,6 +108,23 @@ func (s *Service) SetNow(now func() time.Time) {
 func (s *Service) Verify(ctx context.Context, input VerifyInput) (*VerifyResult, error) {
 	if input.ServiceID == "" {
 		return nil, ErrInvalidInput
+	}
+	if s.lists != nil {
+		hit, err := s.lists.Check(ctx, listing.HitInput{
+			ServiceID: input.ServiceID,
+			IP:        input.IP,
+			UserID:    input.UserID,
+			AppID:     input.AppID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if hit.Whitelisted {
+			return &VerifyResult{Allowed: true, Remaining: s.cfg.Limit.DefaultCapacity, ResetAt: s.now().Unix()}, nil
+		}
+		if hit.Blacklisted {
+			return nil, ErrBlacklisted
+		}
 	}
 	dimensions := s.dimensions(input)
 	if len(dimensions) == 0 {

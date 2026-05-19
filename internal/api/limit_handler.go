@@ -68,6 +68,8 @@ func writeLimitError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, limiter.ErrInvalidInput):
 		response.Error(c, http.StatusBadRequest, "限流参数无效")
+	case errors.Is(err, limiter.ErrBlacklisted):
+		response.Error(c, http.StatusForbidden, "黑名单命中")
 	default:
 		response.Error(c, http.StatusInternalServerError, "限流校验失败")
 	}
