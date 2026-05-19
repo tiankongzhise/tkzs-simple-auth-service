@@ -46,12 +46,13 @@ const fieldTypes = {
   multiselect: "multiselect"
 };
 
+const statusOptions = [["enabled", "启用"], ["disabled", "禁用"]];
+
 const views = {
   users: {
     title: "用户管理",
     meta: "注册、资料、状态、密码与角色分配",
     path: "/api/users",
-    preload: preloadRoles,
     columns: [
       ["username", "用户名"],
       ["displayName", "显示名"],
@@ -87,7 +88,6 @@ const views = {
     title: "APP 管理",
     meta: "机器调用应用、Secret 重置与角色分配",
     path: "/api/apps",
-    preload: preloadRoles,
     columns: [
       ["appId", "APPID"],
       ["name", "名称"],
@@ -409,8 +409,6 @@ function limitRuleFields(includeService) {
   return fields;
 }
 
-const statusOptions = [["enabled", "启用"], ["disabled", "禁用"]];
-
 function action(label, className, handler, visible = () => true) {
   return { label, className, handler, visible };
 }
@@ -424,21 +422,38 @@ function refreshToken() {
 }
 
 function setSession(data) {
-  localStorage.setItem(tokenKey, data.accessToken);
-  if (data.refreshToken) localStorage.setItem(refreshKey, data.refreshToken);
+  const session = normalizeAuthData(data);
   el.loginPanel.classList.add("hidden");
   el.workspace.classList.remove("hidden");
   el.logoutBtn.classList.remove("hidden");
   el.sessionState.textContent = "已登录";
+  try {
+    if (session.accessToken) localStorage.setItem(tokenKey, session.accessToken);
+    if (session.refreshToken) localStorage.setItem(refreshKey, session.refreshToken);
+  } catch (_) {
+    showAlert("浏览器无法保存会话，刷新后需要重新登录", true);
+  }
 }
 
 function clearSession() {
-  localStorage.removeItem(tokenKey);
-  localStorage.removeItem(refreshKey);
+  try {
+    localStorage.removeItem(tokenKey);
+    localStorage.removeItem(refreshKey);
+  } catch (_) {
+    // Ignore storage failures while restoring the visible logged-out state.
+  }
   el.loginPanel.classList.remove("hidden");
   el.workspace.classList.add("hidden");
   el.logoutBtn.classList.add("hidden");
   el.sessionState.textContent = "未登录";
+}
+
+function normalizeAuthData(data) {
+  const raw = data && data.data ? data.data : data || {};
+  return {
+    accessToken: raw.accessToken || raw.access_token || "",
+    refreshToken: raw.refreshToken || raw.refresh_token || ""
+  };
 }
 
 async function api(path, options = {}, retried = false) {
@@ -497,6 +512,15 @@ async function loadView(viewKey = state.currentView) {
   renderTable(view, state.data[viewKey]);
 }
 
+async function safeLoadView(viewKey = state.currentView) {
+  try {
+    await loadView(viewKey);
+  } catch (error) {
+    renderEmptyTable(views[state.currentView]);
+    showAlert(error.message, true);
+  }
+}
+
 function renderFilters(view) {
   el.filterForm.innerHTML = "";
   (view.filters || []).forEach((field) => {
@@ -543,6 +567,12 @@ function renderTable(view, rows) {
   });
 }
 
+function renderEmptyTable(view) {
+  const columns = [...view.columns, ["__actions", "操作"]];
+  el.tableHead.innerHTML = `<tr>${columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}</tr>`;
+  el.tableBody.innerHTML = `<tr><td colspan="${columns.length}">加载失败，请检查权限或刷新重试</td></tr>`;
+}
+
 function renderActions(view, item) {
   const wrap = document.createElement("div");
   wrap.className = "row-actions";
@@ -563,7 +593,7 @@ function openCreate() {
   openForm(view.create.title, view.create.fields, {}, async (payload) => {
     const result = await view.create.submit(payload);
     if (view.create.after) view.create.after(result);
-    await loadView();
+    await safeLoadView();
   });
 }
 
@@ -571,7 +601,7 @@ function openEdit(item) {
   const view = views[state.currentView];
   openForm(view.edit.title, view.edit.fields, item, async (payload) => {
     await view.edit.submit(item, payload);
-    await loadView();
+    await safeLoadView();
   });
 }
 
@@ -665,22 +695,26 @@ function formPayload(form, fields) {
 async function updateUserStatus(item, status) {
   await api(`/api/users/${item.id}/status`, { method: "PUT", body: { status } });
   showAlert("用户状态已更新");
-  await loadView();
+  await safeLoadView();
 }
 
 function openPassword(item) {
   openForm("修改密码", [passwordField("newPassword", "新密码")], {}, async (payload) => {
     await api(`/api/users/${item.id}/password`, { method: "PUT", body: payload });
-    await loadView();
+    await safeLoadView();
   });
 }
 
 function openRoleAssign(kind, item) {
-  openForm("分配角色", [multiSelectField("roleIds", "角色", () => state.roles.map((role) => [role.id, `${role.code} ${role.name}`]))], { roleIds: roleIds(item) }, async (payload) => {
-    const base = kind === "user" ? "users" : "apps";
-    await api(`/api/${base}/${item.id}/roles`, { method: "PUT", body: payload });
-    await loadView();
-  });
+  preloadRoles()
+    .then(() => {
+      openForm("分配角色", [multiSelectField("roleIds", "角色", () => state.roles.map((role) => [role.id, `${role.code} ${role.name}`]))], { roleIds: roleIds(item) }, async (payload) => {
+        const base = kind === "user" ? "users" : "apps";
+        await api(`/api/${base}/${item.id}/roles`, { method: "PUT", body: payload });
+        await safeLoadView();
+      });
+    })
+    .catch((error) => showAlert(error.message, true));
 }
 
 async function resetAppSecret(item) {
@@ -696,14 +730,14 @@ async function resetOIDCSecret(item) {
 async function approveService(item) {
   await api(`/api/services/${item.id}/approve`, { method: "POST", body: {} });
   showAlert("服务已审核");
-  await loadView();
+  await safeLoadView();
 }
 
 async function removeItem(path) {
   if (!confirm("确认删除？")) return;
   await api(path, { method: "DELETE" });
   showAlert("已删除");
-  await loadView();
+  await safeLoadView();
 }
 
 async function preloadRoles() {
@@ -844,7 +878,7 @@ el.loginForm.addEventListener("submit", async (event) => {
       }
     });
     setSession(data);
-    await loadView();
+    safeLoadView();
   } catch (error) {
     el.loginMessage.textContent = error.message;
   }
@@ -852,15 +886,15 @@ el.loginForm.addEventListener("submit", async (event) => {
 
 el.tabs.addEventListener("click", async (event) => {
   if (event.target.matches("button[data-view]")) {
-    await loadView(event.target.dataset.view);
+    await safeLoadView(event.target.dataset.view);
   }
 });
 
-el.refreshBtn.addEventListener("click", () => loadView());
+el.refreshBtn.addEventListener("click", () => safeLoadView());
 el.createBtn.addEventListener("click", openCreate);
 el.filterForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  loadView();
+  safeLoadView();
 });
 el.modalCancel.addEventListener("click", closeModal);
 el.modalClose.addEventListener("click", closeModal);
@@ -878,9 +912,7 @@ el.logoutBtn.addEventListener("click", async () => {
 renderTabs();
 if (accessToken()) {
   setSession({ accessToken: accessToken(), refreshToken: refreshToken() });
-  loadView().catch((error) => {
-    showAlert(error.message, true);
-  });
+  safeLoadView();
 } else {
   clearSession();
 }
