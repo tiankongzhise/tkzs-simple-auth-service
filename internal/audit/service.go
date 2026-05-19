@@ -94,6 +94,14 @@ func (s *Service) ListLogs(ctx context.Context, actor Actor, filter LogFilter) (
 	}
 }
 
+func (s *Service) ListHealthChecks(ctx context.Context, actor Actor, filter LogFilter) ([]model.HealthCheckLog, error) {
+	if actor.UserID == "" {
+		return nil, ErrInvalidInput
+	}
+	filter.Page, filter.PageSize = normalizePage(filter.Page, filter.PageSize)
+	return s.store.ListHealthLogs(ctx, filter)
+}
+
 func validType(typ string) bool {
 	switch typ {
 	case TypeOperation, TypeAuth, TypeLimit, TypeHealth:

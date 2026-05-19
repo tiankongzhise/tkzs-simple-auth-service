@@ -99,6 +99,7 @@ func main() {
 	oidcClientHandler := api.NewOIDCClientHandler(oidcClientService)
 	auditService := audit.NewService(audit.NewGormStore(db))
 	logHandler := api.NewLogHandler(auditService)
+	healthCheckHandler := api.NewHealthCheckHandler(auditService)
 	statisticsHandler := api.NewStatisticsHandler(statisticsService)
 
 	router := server.NewRouter(
@@ -113,6 +114,7 @@ func main() {
 		server.WithAPIRoutes(roleAssignmentHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
 		server.WithAPIRoutes(oidcClientHandler, api.AuthMiddleware(authService), api.RequirePermission("oidc:manage")),
 		server.WithAPIRoutes(logHandler, api.AuthMiddleware(authService), api.RequirePermission("log:read")),
+		server.WithAPIRoutes(healthCheckHandler, api.AuthMiddleware(authService), api.RequirePermission("health:read")),
 		server.WithAPIRoutes(statisticsHandler, api.AuthMiddleware(authService), api.RequirePermission("statistics:read")),
 		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),

@@ -46,6 +46,19 @@ func TestListLogsRestrictsNormalActor(t *testing.T) {
 	}
 }
 
+func TestListHealthChecksUsesHealthLogs(t *testing.T) {
+	store := &fakeStore{healthLogs: []model.HealthCheckLog{{ServiceID: "svc-001"}}}
+	service := NewService(store)
+
+	items, err := service.ListHealthChecks(t.Context(), Actor{UserID: "admin", IsAdmin: true}, LogFilter{ServiceID: "svc-001"})
+	if err != nil {
+		t.Fatalf("ListHealthChecks() error = %v", err)
+	}
+	if len(items) != 1 || store.lastFilter.Type != "" || store.lastFilter.ServiceID != "svc-001" {
+		t.Fatalf("items = %#v filter = %#v", items, store.lastFilter)
+	}
+}
+
 type fakeStore struct {
 	lastFilter    LogFilter
 	operationLogs []model.OperationLog
