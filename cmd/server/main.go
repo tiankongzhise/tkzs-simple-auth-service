@@ -14,6 +14,7 @@ import (
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/listing"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/m2m"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/oidc"
+	rolesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/role"
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/server"
 	servicesvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/service"
 	usersvc "github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/user"
@@ -82,6 +83,9 @@ func main() {
 	userService := usersvc.NewService(cfg, usersvc.NewGormStore(db), usersvc.WithCache(safeRedis))
 	userPublicHandler := api.NewUserPublicHandler(userService)
 	userHandler := api.NewUserHandler(userService)
+	roleService := rolesvc.NewService(rolesvc.NewGormStore(db))
+	permissionHandler := api.NewPermissionHandler(roleService)
+	roleHandler := api.NewRoleHandler(roleService)
 
 	router := server.NewRouter(
 		cfg,
@@ -90,6 +94,8 @@ func main() {
 		server.WithLimitRoutes(limitHandler),
 		server.WithAPIRoutes(userPublicHandler),
 		server.WithAPIRoutes(userHandler, api.AuthMiddleware(authService)),
+		server.WithAPIRoutes(permissionHandler, api.AuthMiddleware(authService)),
+		server.WithAPIRoutes(roleHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
 		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),
 		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage")),
