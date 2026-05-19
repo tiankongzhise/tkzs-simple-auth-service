@@ -86,6 +86,9 @@ func TestRunOnceChecksTargets(t *testing.T) {
 	if store.logs != 1 {
 		t.Fatalf("logs = %d", store.logs)
 	}
+	if store.cleanupAge != 7*24*time.Hour {
+		t.Fatalf("cleanup age = %s", store.cleanupAge)
+	}
 }
 
 func fixedClock() func() time.Time {
@@ -99,6 +102,7 @@ type fakeStore struct {
 	logs          int
 	updatedID     string
 	updatedStatus string
+	cleanupAge    time.Duration
 }
 
 func (s *fakeStore) ListHealthCheckTargets(_ context.Context) ([]model.Service, error) {
@@ -115,6 +119,11 @@ func (s *fakeStore) CreateHealthCheckLog(_ context.Context, log *model.HealthChe
 	s.log = *log
 	s.logs++
 	return nil
+}
+
+func (s *fakeStore) CleanupExpiredPending(_ context.Context, maxAge time.Duration) (int64, error) {
+	s.cleanupAge = maxAge
+	return 0, nil
 }
 
 type fakeHTTPClient struct {

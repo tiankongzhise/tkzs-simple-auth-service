@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/hbc-thinkbook/tkzs-simple-auth-service/internal/model"
 	"gorm.io/gorm"
@@ -84,4 +85,11 @@ func (s *GormStore) ListHealthCheckTargets(ctx context.Context) ([]model.Service
 
 func (s *GormStore) CreateHealthCheckLog(ctx context.Context, log *model.HealthCheckLog) error {
 	return s.db.WithContext(ctx).Create(log).Error
+}
+
+func (s *GormStore) DeleteExpiredPending(ctx context.Context, cutoff time.Time) (int64, error) {
+	result := s.db.WithContext(ctx).
+		Where("approved = ? AND status = ? AND created_at < ?", false, StatusPending, cutoff).
+		Delete(&model.Service{})
+	return result.RowsAffected, result.Error
 }

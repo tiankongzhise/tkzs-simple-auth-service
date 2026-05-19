@@ -23,6 +23,7 @@ type ServiceStore interface {
 	ListHealthCheckTargets(ctx context.Context) ([]model.Service, error)
 	UpdateHealthStatus(ctx context.Context, id string, status string) error
 	CreateHealthCheckLog(ctx context.Context, log *model.HealthCheckLog) error
+	CleanupExpiredPending(ctx context.Context, maxAge time.Duration) (int64, error)
 }
 
 type HTTPClient interface {
@@ -93,6 +94,9 @@ func (c *Checker) Check(ctx context.Context, target model.Service) (string, erro
 }
 
 func (c *Checker) RunOnce(ctx context.Context) error {
+	if _, err := c.store.CleanupExpiredPending(ctx, 7*24*time.Hour); err != nil {
+		return err
+	}
 	targets, err := c.store.ListHealthCheckTargets(ctx)
 	if err != nil {
 		return err
@@ -123,6 +127,9 @@ func (c *Checker) Start(ctx context.Context) {
 }
 
 func (c *Checker) runDue(ctx context.Context, now time.Time, lastChecked map[string]time.Time) {
+	if _, err := c.store.CleanupExpiredPending(ctx, 7*24*time.Hour); err != nil {
+		return
+	}
 	targets, err := c.store.ListHealthCheckTargets(ctx)
 	if err != nil {
 		return

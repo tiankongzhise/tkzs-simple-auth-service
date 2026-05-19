@@ -113,13 +113,37 @@ func TestUpdateHealthStatusSyncsDiscovery(t *testing.T) {
 	}
 }
 
+func TestCleanupExpiredPendingDeletesAndSyncsDiscovery(t *testing.T) {
+	store := &fakeStore{expiredPending: 2}
+	cache := newFakeServiceCache(t)
+	service := NewService(config.Default(), store, cache)
+	now := time.Date(2026, 5, 19, 9, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	deleted, err := service.CleanupExpiredPending(t.Context(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("CleanupExpiredPending() error = %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d", deleted)
+	}
+	if !store.cutoff.Equal(now.Add(-7 * 24 * time.Hour)) {
+		t.Fatalf("cutoff = %s", store.cutoff)
+	}
+	if _, ok := cache.values["authlimit:service:list"]; !ok {
+		t.Fatalf("service list cache = %#v", cache.values)
+	}
+}
+
 type fakeStore struct {
-	service      *model.Service
-	services     []model.Service
-	discoverable []model.Service
-	created      *model.Service
-	updated      *model.Service
-	deleted      string
+	service        *model.Service
+	services       []model.Service
+	discoverable   []model.Service
+	created        *model.Service
+	updated        *model.Service
+	deleted        string
+	expiredPending int64
+	cutoff         time.Time
 }
 
 func (s *fakeStore) Create(_ context.Context, service *model.Service) error {
@@ -173,6 +197,11 @@ func (s *fakeStore) ListHealthCheckTargets(_ context.Context) ([]model.Service, 
 
 func (s *fakeStore) CreateHealthCheckLog(_ context.Context, _ *model.HealthCheckLog) error {
 	return nil
+}
+
+func (s *fakeStore) DeleteExpiredPending(_ context.Context, cutoff time.Time) (int64, error) {
+	s.cutoff = cutoff
+	return s.expiredPending, nil
 }
 
 type fakeServiceCache struct {

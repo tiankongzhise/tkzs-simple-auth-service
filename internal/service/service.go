@@ -39,6 +39,7 @@ type Store interface {
 	ListDiscoverable(ctx context.Context) ([]model.Service, error)
 	ListHealthCheckTargets(ctx context.Context) ([]model.Service, error)
 	CreateHealthCheckLog(ctx context.Context, log *model.HealthCheckLog) error
+	DeleteExpiredPending(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 type Cache interface {
@@ -287,6 +288,22 @@ func (s *Service) UpdateHealthStatus(ctx context.Context, id string, status stri
 
 func (s *Service) CreateHealthCheckLog(ctx context.Context, log *model.HealthCheckLog) error {
 	return s.store.CreateHealthCheckLog(ctx, log)
+}
+
+func (s *Service) CleanupExpiredPending(ctx context.Context, maxAge time.Duration) (int64, error) {
+	if maxAge <= 0 {
+		return 0, ErrInvalidInput
+	}
+	deleted, err := s.store.DeleteExpiredPending(ctx, s.now().UTC().Add(-maxAge))
+	if err != nil {
+		return 0, err
+	}
+	if deleted > 0 {
+		if err := s.SyncDiscovery(ctx); err != nil {
+			return deleted, err
+		}
+	}
+	return deleted, nil
 }
 
 func canAccess(actor Actor, record *model.Service) bool {
