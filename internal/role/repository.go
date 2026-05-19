@@ -91,6 +91,50 @@ func (s *GormStore) FindPermissionsByIDs(ctx context.Context, ids []string) ([]m
 	return permissions, nil
 }
 
+func (s *GormStore) FindUserByID(ctx context.Context, id string) (*model.User, error) {
+	var user model.User
+	err := s.db.WithContext(ctx).Preload("Roles").Where("id = ?", id).First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (s *GormStore) FindAppByID(ctx context.Context, id string) (*model.App, error) {
+	var app model.App
+	err := s.db.WithContext(ctx).Preload("Roles").Where("id = ?", id).First(&app).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &app, nil
+}
+
+func (s *GormStore) FindRolesByIDs(ctx context.Context, ids []string) ([]model.Role, error) {
+	var roles []model.Role
+	if len(ids) == 0 {
+		return roles, nil
+	}
+	err := s.db.WithContext(ctx).Preload("Permissions").Where("id IN ?", ids).Find(&roles).Error
+	if err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
+func (s *GormStore) ReplaceUserRoles(ctx context.Context, user *model.User, roles []model.Role) error {
+	return s.db.WithContext(ctx).Model(user).Association("Roles").Replace(roles)
+}
+
+func (s *GormStore) ReplaceAppRoles(ctx context.Context, app *model.App, roles []model.Role) error {
+	return s.db.WithContext(ctx).Model(app).Association("Roles").Replace(roles)
+}
+
 func replacePermissions(tx *gorm.DB, role *model.Role, permissionIDs []string) error {
 	if len(permissionIDs) == 0 {
 		return tx.Model(role).Association("Permissions").Replace([]model.Permission{})

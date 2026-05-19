@@ -70,7 +70,64 @@ func TestRoleHandlerForbidden(t *testing.T) {
 	}
 }
 
+func TestRoleAssignmentHandlerAssignUserRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewRoleAssignmentHandler(&fakeRoleService{user: &model.User{
+		BaseModel: model.BaseModel{ID: "user-002"},
+		Username:  "user_002",
+		Roles:     []model.Role{{Code: "ops"}},
+	}})
+	router := testRoleAssignmentRouter(handler)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/users/user-002/roles", strings.NewReader(`{"roleIds":["role-001"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ops") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestRoleAssignmentHandlerAssignAppRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewRoleAssignmentHandler(&fakeRoleService{app: &model.App{
+		BaseModel:   model.BaseModel{ID: "app-001"},
+		AppID:       "app00001",
+		Name:        "demo app",
+		OwnerUserID: "user-001",
+		Status:      model.StatusEnabled,
+		Roles:       []model.Role{{Code: "ops"}},
+	}})
+	router := testRoleAssignmentRouter(handler)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/apps/app-001/roles", strings.NewReader(`{"roleIds":["role-001"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func testRoleRouter(handler *RoleHandler) *gin.Engine {
+	router := gin.New()
+	group := router.Group("/api")
+	group.Use(func(c *gin.Context) {
+		c.Set(ContextUserID, "user-001")
+		c.Set(ContextRoles, []string{"admin"})
+		c.Set(ContextPermissions, []string{"role:manage"})
+		c.Next()
+	})
+	handler.RegisterRoutes(group)
+	return router
+}
+
+func testRoleAssignmentRouter(handler *RoleAssignmentHandler) *gin.Engine {
 	router := gin.New()
 	group := router.Group("/api")
 	group.Use(func(c *gin.Context) {
@@ -87,6 +144,8 @@ type fakeRoleService struct {
 	role        *model.Role
 	roles       []model.Role
 	permissions []model.Permission
+	user        *model.User
+	app         *model.App
 	err         error
 }
 
@@ -112,4 +171,12 @@ func (s *fakeRoleService) Update(_ context.Context, _ rolesvc.Actor, _ rolesvc.U
 
 func (s *fakeRoleService) Delete(_ context.Context, _ rolesvc.Actor, _ string) error {
 	return s.err
+}
+
+func (s *fakeRoleService) AssignUserRoles(_ context.Context, _ rolesvc.Actor, _ rolesvc.AssignRolesInput) (*model.User, error) {
+	return s.user, s.err
+}
+
+func (s *fakeRoleService) AssignAppRoles(_ context.Context, _ rolesvc.Actor, _ rolesvc.AssignRolesInput) (*model.App, error) {
+	return s.app, s.err
 }

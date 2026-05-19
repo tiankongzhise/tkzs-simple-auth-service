@@ -19,6 +19,8 @@ type RoleService interface {
 	Get(ctx context.Context, actor rolesvc.Actor, id string) (*model.Role, error)
 	Update(ctx context.Context, actor rolesvc.Actor, input rolesvc.UpdateInput) (*model.Role, error)
 	Delete(ctx context.Context, actor rolesvc.Actor, id string) error
+	AssignUserRoles(ctx context.Context, actor rolesvc.Actor, input rolesvc.AssignRolesInput) (*model.User, error)
+	AssignAppRoles(ctx context.Context, actor rolesvc.Actor, input rolesvc.AssignRolesInput) (*model.App, error)
 }
 
 type PermissionHandler struct {
@@ -26,6 +28,10 @@ type PermissionHandler struct {
 }
 
 type RoleHandler struct {
+	service RoleService
+}
+
+type RoleAssignmentHandler struct {
 	service RoleService
 }
 
@@ -40,6 +46,10 @@ type roleUpdateRequest struct {
 	Name          string   `json:"name" binding:"required"`
 	Description   string   `json:"description"`
 	PermissionIDs []string `json:"permissionIds"`
+}
+
+type roleAssignRequest struct {
+	RoleIDs []string `json:"roleIds"`
 }
 
 type roleResponse struct {
@@ -71,6 +81,10 @@ func NewRoleHandler(service RoleService) *RoleHandler {
 	return &RoleHandler{service: service}
 }
 
+func NewRoleAssignmentHandler(service RoleService) *RoleAssignmentHandler {
+	return &RoleAssignmentHandler{service: service}
+}
+
 func (h *PermissionHandler) RegisterRoutes(group *gin.RouterGroup) {
 	group.GET("/permissions", h.List)
 }
@@ -82,6 +96,11 @@ func (h *RoleHandler) RegisterRoutes(group *gin.RouterGroup) {
 	roles.GET("/:id", h.Get)
 	roles.PUT("/:id", h.Update)
 	roles.DELETE("/:id", h.Delete)
+}
+
+func (h *RoleAssignmentHandler) RegisterRoutes(group *gin.RouterGroup) {
+	group.PUT("/users/:id/roles", h.AssignUserRoles)
+	group.PUT("/apps/:id/roles", h.AssignAppRoles)
 }
 
 func (h *PermissionHandler) List(c *gin.Context) {
@@ -163,6 +182,40 @@ func (h *RoleHandler) Delete(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"deleted": true})
+}
+
+func (h *RoleAssignmentHandler) AssignUserRoles(c *gin.Context) {
+	var req roleAssignRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	result, err := h.service.AssignUserRoles(c.Request.Context(), roleActorFromContext(c), rolesvc.AssignRolesInput{
+		SubjectID: c.Param("id"),
+		RoleIDs:   req.RoleIDs,
+	})
+	if err != nil {
+		writeRoleError(c, err)
+		return
+	}
+	response.OK(c, userModelResponse(*result))
+}
+
+func (h *RoleAssignmentHandler) AssignAppRoles(c *gin.Context) {
+	var req roleAssignRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	result, err := h.service.AssignAppRoles(c.Request.Context(), roleActorFromContext(c), rolesvc.AssignRolesInput{
+		SubjectID: c.Param("id"),
+		RoleIDs:   req.RoleIDs,
+	})
+	if err != nil {
+		writeRoleError(c, err)
+		return
+	}
+	response.OK(c, appModelResponse(*result, ""))
 }
 
 func roleActorFromContext(c *gin.Context) rolesvc.Actor {

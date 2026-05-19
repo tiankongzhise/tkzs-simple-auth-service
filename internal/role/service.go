@@ -24,6 +24,11 @@ type Store interface {
 	Delete(ctx context.Context, id string) error
 	ListPermissions(ctx context.Context) ([]model.Permission, error)
 	FindPermissionsByIDs(ctx context.Context, ids []string) ([]model.Permission, error)
+	FindUserByID(ctx context.Context, id string) (*model.User, error)
+	FindAppByID(ctx context.Context, id string) (*model.App, error)
+	FindRolesByIDs(ctx context.Context, ids []string) ([]model.Role, error)
+	ReplaceUserRoles(ctx context.Context, user *model.User, roles []model.Role) error
+	ReplaceAppRoles(ctx context.Context, app *model.App, roles []model.Role) error
 }
 
 type Service struct {
@@ -52,6 +57,11 @@ type UpdateInput struct {
 	Name          string
 	Description   string
 	PermissionIDs []string
+}
+
+type AssignRolesInput struct {
+	SubjectID string
+	RoleIDs   []string
 }
 
 func NewService(store Store) *Service {
@@ -156,6 +166,53 @@ func (s *Service) Delete(ctx context.Context, actor Actor, id string) error {
 	return s.store.Delete(ctx, id)
 }
 
+func (s *Service) AssignUserRoles(ctx context.Context, actor Actor, input AssignRolesInput) (*model.User, error) {
+	if actor.UserID == "" || strings.TrimSpace(input.SubjectID) == "" {
+		return nil, ErrInvalidInput
+	}
+	user, err := s.store.FindUserByID(ctx, input.SubjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !actor.IsAdmin && user.ID != actor.UserID {
+		return nil, ErrForbidden
+	}
+	roles, err := s.assignableRoles(ctx, actor, input.RoleIDs)
+	if err != nil {
+		return nil, err
+	}
+	if user.ID == actor.UserID && removesAdminRole(user.Roles, roles) {
+		return nil, ErrForbidden
+	}
+	if err := s.store.ReplaceUserRoles(ctx, user, roles); err != nil {
+		return nil, err
+	}
+	user.Roles = roles
+	return user, nil
+}
+
+func (s *Service) AssignAppRoles(ctx context.Context, actor Actor, input AssignRolesInput) (*model.App, error) {
+	if actor.UserID == "" || strings.TrimSpace(input.SubjectID) == "" {
+		return nil, ErrInvalidInput
+	}
+	app, err := s.store.FindAppByID(ctx, input.SubjectID)
+	if err != nil {
+		return nil, err
+	}
+	if !actor.IsAdmin && app.OwnerUserID != actor.UserID {
+		return nil, ErrForbidden
+	}
+	roles, err := s.assignableRoles(ctx, actor, input.RoleIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.ReplaceAppRoles(ctx, app, roles); err != nil {
+		return nil, err
+	}
+	app.Roles = roles
+	return app, nil
+}
+
 func (s *Service) ensureAssignablePermissions(ctx context.Context, actor Actor, ids []string) error {
 	if len(ids) == 0 || actor.IsAdmin {
 		return nil
@@ -177,6 +234,47 @@ func (s *Service) ensureAssignablePermissions(ctx context.Context, actor Actor, 
 		}
 	}
 	return nil
+}
+
+func (s *Service) assignableRoles(ctx context.Context, actor Actor, ids []string) ([]model.Role, error) {
+	if len(ids) == 0 {
+		return []model.Role{}, nil
+	}
+	roles, err := s.store.FindRolesByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(roles) != len(ids) {
+		return nil, ErrInvalidInput
+	}
+	if actor.IsAdmin {
+		return roles, nil
+	}
+	for i := range roles {
+		if !canAccess(actor, &roles[i]) {
+			return nil, ErrForbidden
+		}
+	}
+	return roles, nil
+}
+
+func removesAdminRole(current []model.Role, next []model.Role) bool {
+	hasAdmin := false
+	for _, role := range current {
+		if role.Code == model.RoleAdminCode {
+			hasAdmin = true
+			break
+		}
+	}
+	if !hasAdmin {
+		return false
+	}
+	for _, role := range next {
+		if role.Code == model.RoleAdminCode {
+			return false
+		}
+	}
+	return true
 }
 
 func canAccess(actor Actor, record *model.Role) bool {

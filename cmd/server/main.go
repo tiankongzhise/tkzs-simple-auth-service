@@ -86,6 +86,7 @@ func main() {
 	roleService := rolesvc.NewService(rolesvc.NewGormStore(db))
 	permissionHandler := api.NewPermissionHandler(roleService)
 	roleHandler := api.NewRoleHandler(roleService)
+	roleAssignmentHandler := api.NewRoleAssignmentHandler(roleService)
 
 	router := server.NewRouter(
 		cfg,
@@ -96,6 +97,7 @@ func main() {
 		server.WithAPIRoutes(userHandler, api.AuthMiddleware(authService)),
 		server.WithAPIRoutes(permissionHandler, api.AuthMiddleware(authService)),
 		server.WithAPIRoutes(roleHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
+		server.WithAPIRoutes(roleAssignmentHandler, api.AuthMiddleware(authService), api.RequirePermission("role:manage")),
 		server.WithAPIRoutes(appHandler, api.AuthMiddleware(authService), api.RequirePermission("app:manage")),
 		server.WithAPIRoutes(serviceHandler, api.AuthMiddleware(authService), api.RequirePermission("service:manage")),
 		server.WithAPIRoutes(listHandler, api.AuthMiddleware(authService), api.RequirePermission("blacklist:manage")),
